@@ -885,7 +885,8 @@ OUT="$PWD/${APPID}_${VCODE}-review"
 mkdir -p "$OUT"
 [ -n "$MR_ARG" ] && cp "$WORK/cq.json" "$OUT/codequality.json"
 NOT_FROM_CI=0
-if [ -n "$APK_ARG" ] && [ "${#APK_URLS[@]}" -gt 0 ] \
+# (a merge request whose CI built no APK did not build this one either)
+if [ -n "$APK_ARG" ] && [ -n "$IID" ] \
    && ! printf '%s\n' "${APK_URLS[@]##*/}" | grep -qxF "${APPID}_${VCODE}.apk"; then
   warn "${APPID}_${VCODE}.apk is not one this merge request's CI built — testing it anyway"
   NOT_FROM_CI=1
