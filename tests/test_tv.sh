@@ -11,11 +11,22 @@ test_tv_app_opens_through_its_leanback_activity() {
   refute_out "open it by hand"
 }
 
-test_tv_app_stops_on_a_device_without_leanback() {
+# Some Android TV boxes (e.g. Ugoos AM9 Pro, Android 14) do not declare the
+# Leanback feature, yet run TV apps installed with adb.
+test_tv_app_on_a_device_without_leanback_warns_and_continues() {
   use_mr tv.apk org.example.tv
+  export FAKE_NO_LAUNCHER=1 FAKE_GLAB_OFF=1
   run_tester "" -w 1 --keep 123
+  assert_rc 0
+  assert_out "this app requires Android TV, and this device does not declare it"
+  assert_has "$FAKE/calls.log" "install -r"
+  assert_has "$(review_dir)/report.md" "The device does not declare Android TV (android.software.leanback)"
+}
+
+test_tv_app_on_a_device_without_leanback_can_be_stopped() {
+  use_mr tv.apk org.example.tv
+  run_tester "n\n" -w 1 --keep 123
   assert_rc 1
-  assert_out "this app needs Android TV; the device is not one"
   refute_has "$FAKE/calls.log" "install -r"
 }
 
