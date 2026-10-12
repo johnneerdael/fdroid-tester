@@ -6,7 +6,7 @@ test_tv_app_opens_through_its_leanback_activity() {
   export FAKE_NO_LAUNCHER=1 FAKE_GLAB_OFF=1
   run_tester "" -w 1 --keep 123
   assert_rc 0
-  assert_has "$FAKE/calls.log" "shell am start -n org.example.tv/org.example.tv.Main"
+  assert_has "$FAKE/calls.log" "shell am start -a android.intent.action.MAIN -c android.intent.category.LEANBACK_LAUNCHER -n org.example.tv/org.example.tv.Main"
   refute_has "$FAKE/calls.log" "monkey"
   refute_out "open it by hand"
 }

@@ -56,3 +56,12 @@ test_local_apk_without_a_merge_request_offers_the_editor() {
   assert_rc 0
   assert_out "Edit the report\\? "
 }
+
+test_local_apk_for_a_merge_request_whose_ci_built_nothing_is_flagged() {
+  use_mr phone.apk org.example.phone
+  printf '{"new_errors": []}' > "$FAKE/cq.json"
+  export FAKE_GLAB_OFF=1
+  run_tester "" -w 1 --keep --apk "$APKS/phone.apk" 123
+  assert_rc 0
+  assert_has "$(review_dir)/report.md" 'It is not one of the APKs this merge request'"'"'s CI built (`org.example.phone_7.apk`).'
+}
