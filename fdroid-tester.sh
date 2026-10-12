@@ -2,20 +2,21 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 by-architect
 #
-# fdroid-tester.sh — test an app from an fdroiddata merge request on a phone,
-# the way F-Droid's "Tester Review" asks for, and write the report to post.
+# fdroid-tester.sh — test an app from an fdroiddata merge request on a device
+# (a phone or an Android TV), the way F-Droid's "Tester Review" asks for, and
+# write the report to post.
 # https://github.com/by-architect/fdroid-tester
 #
 #   fdroid-tester.sh <merge request link or number> [options]
-#   fdroid-tester.sh --check          only check this machine and the phone
+#   fdroid-tester.sh --check          only check this machine and the device
 #
-# In order, after checking every tool, the phone, PCAPdroid and the glab login:
+# In order, after checking every tool, the device, PCAPdroid and the glab login:
 #   1. reads the merge request and its Code Quality report from gitlab.com
 #      (the APK link, permissions, CI warnings) — no login needed
-#   2. downloads the APK that fits the connected phone into the current folder
+#   2. downloads the APK that fits the connected device into the current folder
 #   3. looks inside the APK: permissions, trackers (Exodus list), web addresses
 #      in the code, WebView, languages, debuggable/cleartext flags
-#   4. installs it with adb, records its traffic with PCAPdroid if the phone
+#   4. installs it with adb, records its traffic with PCAPdroid if the device
 #      has it, opens the app and watches the first seconds: crash, permission
 #      prompt on start, connections on start
 #   5. asks what only a person can tell, and writes the report in the wiki's
@@ -50,9 +51,9 @@ usage: fdroid-tester.sh <merge request link or number> [options]
 options:
   -s SERIAL      the adb device to use, when more than one is connected
   -w SECONDS     how long to watch the app after it opens (default $WATCH)
-  --no-device    only download and look inside the APK, no phone needed
+  --no-device    only download and look inside the APK, no device needed
   --keep         leave the app installed at the end without asking
-  --check        only check the tools, the phone, PCAPdroid and the glab
+  --check        only check the tools, the device, PCAPdroid and the glab
                  login, then stop
   --version      print the version
   -h, --help     this text
@@ -61,7 +62,7 @@ The APK goes into the current folder; the report, screenshots and network
 capture into <appid>_<versionCode>-review/ next to it.
 
 Optional keys (one line each, nothing else in the file):
-  $CONF/pcapdroid-api-key   PCAPdroid starts without asking on the phone
+  $CONF/pcapdroid-api-key   PCAPdroid starts without asking on the device
                             (PCAPdroid → Settings → Control permissions → menu)
   $CONF/virustotal-api-key  only if you already have one: VirusTotal is then
                             scanned in the background instead of opened in
@@ -88,7 +89,7 @@ done
 
 # ---------------------------------------------------------------- presentation
 # Section titles in a soft muted teal; what you have to do yourself (on the
-# phone, in the browser) in blue, so it stands out from what the script says.
+# device, in the browser) in blue, so it stands out from what the script says.
 if [ -t 1 ]; then
   B=$'\033[1m'; DIM=$'\033[2m'; R=$'\033[0m'
   GRN=$'\033[32m'; YLW=$'\033[33m'; RED=$'\033[31m'; CYN=$'\033[36m'
@@ -124,7 +125,7 @@ if [ -z "$MR_ARG" ] && [ "$CHECK_ONLY" = 0 ]; then
   3. Run this script with that link:
      ${B}$0 https://gitlab.com/fdroid/fdroiddata/-/merge_requests/38458${R}
 
-  ${DIM}$0 --check   checks your tools and phone first
+  ${DIM}$0 --check   checks your tools and device first
   $0 --help    all the options${R}
 
 EOF
@@ -172,7 +173,7 @@ pause() { printf '   %s➜ %s%s ' "$BLU" "$1" "$R" >&2; local _; readline _; }
 
 # ================================================================ 0. checks
 # Everything a run leans on, checked before anything is downloaded. A missing
-# required tool stops here; a missing phone, PCAPdroid or glab login only turns
+# required tool stops here; a missing device, PCAPdroid or glab login only turns
 # its own part off, and the line says how to fix it.
 FAILS=0
 row() {  # row ok|warn|fail|info "what" "detail"
@@ -253,11 +254,11 @@ TRK_N="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["tr
 if [ -n "$TRK_N" ]; then row ok Exodus "$TRK_N trackers in the list"
 else row warn Exodus "could not fetch the tracker list — the tracker check is off"; fi
 
-# --- the phone and PCAPdroid
+# --- the device and PCAPdroid
 if [ "$NO_DEVICE" = 1 ]; then
-  row info phone "skipped (--no-device)"
+  row info device "skipped (--no-device)"
 elif ! have adb; then
-  row warn adb "not installed — the phone part is off (install Android platform-tools)"
+  row warn adb "not installed — the device part is off (install Android platform-tools)"
   NO_PHONE_FOUND=1
 else
   "${ADB[@]}" start-server >/dev/null 2>&1 || true
@@ -276,25 +277,25 @@ else
       DEV_ABIS="$(ash getprop ro.product.cpu.abilist)"
       DEV_SDK="$(ash getprop ro.build.version.sdk)"
       DEV_DESC="$(ash getprop ro.product.manufacturer) $(ash getprop ro.product.model), Android $(ash getprop ro.build.version.release) (SDK $DEV_SDK)"
-      row ok phone "$DEV_DESC — $DEV_ABIS"
+      row ok device "$DEV_DESC — $DEV_ABIS"
       PCAP_INFO="$(ash dumpsys package "$PCAP_PKG")"
       PCAP_VER="$(printf '%s\n' "$PCAP_INFO" | sed -n 's/.*versionName=\([^ ]*\).*/\1/p' | head -1)"
       PCAP_CODE="$(printf '%s\n' "$PCAP_INFO" | sed -n 's/.*versionCode=\([0-9]*\).*/\1/p' | head -1)"
       if [ -z "$PCAP_CODE" ]; then
-        row warn PCAPdroid "not on the phone — the network check needs it"; PCAP_NEED=1
+        row warn PCAPdroid "not on the device — the network check needs it"; PCAP_NEED=1
       elif [ "$PCAP_CODE" -lt 62 ]; then
         row warn PCAPdroid "$PCAP_VER is too old to be started from here"; PCAP_NEED=1
       else
         PCAP_OK=1
         if [ -s "$CONF/pcapdroid-api-key" ]; then row ok PCAPdroid "$PCAP_VER, API key set"
-        else row ok PCAPdroid "$PCAP_VER — it asks on the phone; an API key skips that (--help)"; fi
+        else row ok PCAPdroid "$PCAP_VER — it asks on the device; an API key skips that (--help)"; fi
       fi ;;
-    unauthorized) row fail phone "${SERIAL:-the phone} has not allowed this computer — accept the USB debugging prompt on it" ;;
-    offline)      row fail phone "${SERIAL:-the phone} is offline — unplug it and plug it back in" ;;
-    many)         row fail phone "${#DEVS[@]} devices connected — pick one with -s: ${DEVS[*]%% *}" ;;
-    "")           if [ -n "$SERIAL" ]; then row fail phone "$SERIAL is not connected"
-                  else row warn phone "none connected — plug it in with USB debugging on"; NO_PHONE_FOUND=1; fi ;;
-    *)            row fail phone "${SERIAL:-the phone} is in state '$STATE'" ;;
+    unauthorized) row fail device "${SERIAL:-the device} has not allowed this computer — accept the USB debugging prompt on it" ;;
+    offline)      row fail device "${SERIAL:-the device} is offline — unplug it and plug it back in" ;;
+    many)         row fail device "${#DEVS[@]} devices connected — pick one with -s: ${DEVS[*]%% *}" ;;
+    "")           if [ -n "$SERIAL" ]; then row fail device "$SERIAL is not connected"
+                  else row warn device "none connected — plug it in with USB debugging on"; NO_PHONE_FOUND=1; fi ;;
+    *)            row fail device "${SERIAL:-the device} is in state '$STATE'" ;;
   esac
 fi
 
@@ -323,7 +324,7 @@ if [ "$FAILS" -gt 0 ]; then
 fi
 
 # PCAPdroid missing or too old: F-Droid is the place to get it, but the latest
-# GitHub release can go straight onto the phone from here.
+# GitHub release can go straight onto the device from here.
 install_pcapdroid() {
   local rel url apk pkg out
   rel="$(curl -fsS -m 30 https://api.github.com/repos/emanuele-f/PCAPdroid/releases/latest 2>/dev/null)" \
@@ -345,10 +346,10 @@ print(next((a["browser_download_url"] for a in r.get("assets", []) if a["name"].
   if [ "$pkg" != "$PCAP_PKG" ]; then
     rm -f "$apk"; warn "the download is not PCAPdroid (${pkg:-unreadable}) — not installing it"; return 1
   fi
-  say "installing ${apk##*/} on the phone…"
+  say "installing ${apk##*/} on the device…"
   if ! out="$("${ADB[@]}" install -r "$apk" 2>&1)"; then
     if printf '%s' "$out" | grep -q UPDATE_INCOMPATIBLE; then
-      warn "the PCAPdroid on the phone is signed by someone else (another store)"
+      warn "the PCAPdroid on the device is signed by someone else (another store)"
       confirm "Uninstall it and install the GitHub one? (its settings are lost)" n || return 1
       "${ADB[@]}" uninstall "$PCAP_PKG" >/dev/null 2>&1 || true
       out="$("${ADB[@]}" install "$apk" 2>&1)" || { printf '%s\n' "$out" | tail -2 | sed 's/^/     /'; return 1; }
@@ -362,7 +363,7 @@ if [ "$PCAP_NEED" = 1 ]; then
   printf '\n'
   say "PCAPdroid records what the app connects to. Install it from F-Droid:"
   act "https://f-droid.org/packages/$PCAP_PKG/"
-  if confirm "Or install the latest version from GitHub onto the phone now?" y; then
+  if confirm "Or install the latest version from GitHub onto the device now?" y; then
     install_pcapdroid && PCAP_OK=1 || note "carrying on without the network check"
   fi
 fi
@@ -370,23 +371,23 @@ if [ "$CHECK_ONLY" = 1 ]; then
   printf '\n'; ok "ready"; exit 0
 fi
 if [ "$NO_PHONE_FOUND" = 1 ]; then
-  confirm "Carry on with the checks that need no phone?" y || exit 1
+  confirm "Carry on with the checks that need no device?" y || exit 1
   NO_DEVICE=1
 fi
 
 WORK="$(mktemp -d)"
-# The phone stays awake while the script runs, so you can put it down between
+# The device stays awake while the script runs, so you can put it down between
 # steps; its own "stay awake while charging" setting comes back at the end,
 # also after Ctrl+C or an error.
 STAYON_OLD=""
 keep_awake() {
   STAYON_OLD="$(ash settings get global stay_on_while_plugged_in)"
   case "$STAYON_OLD" in
-    ''|*[!0-9]*) STAYON_OLD=""; warn "could not keep the phone awake"; return 0 ;;
+    ''|*[!0-9]*) STAYON_OLD=""; warn "could not keep the device awake"; return 0 ;;
   esac
   ash svc power stayon true >/dev/null || true
   ash input keyevent KEYCODE_WAKEUP >/dev/null || true
-  ok "the phone stays awake while this runs (back to its own setting at the end)"
+  ok "the device stays awake while this runs (back to its own setting at the end)"
 }
 restore_awake() {
   [ -n "$STAYON_OLD" ] || return 0
@@ -746,7 +747,7 @@ step "2. APK"
 apk_abis() { unzip -Z1 "$1" 2>/dev/null | sed -n 's#^lib/\([^/]*\)/.*#\1#p' | sort -u | tr '\n' ' '; }
 
 # rank <apk abis> — 0 for no native code, else where the best shared ABI sits
-# in the phone's list (1 = its main one); nothing if they share none
+# in the device's list (1 = its main one); nothing if they share none
 rank() {
   local i=1 a
   [ -z "${1// /}" ] && { echo 0; return; }
@@ -775,7 +776,7 @@ for url in "${APK_URLS[@]}"; do
   note "  native code: ${abis:-none}"
   if [ -n "$r" ] && [ "$r" -lt "$BEST" ]; then APK="$f"; BEST="$r"; APK_ABIS="$abis"; fi
 done
-[ -n "$APK" ] || die "none of the APKs runs on this phone ($DEV_ABIS)"
+[ -n "$APK" ] || die "none of the APKs runs on this device ($DEV_ABIS)"
 ok "testing ${APK##*/}"
 
 BADGING="$("$AAPT2" dump badging "$APK" 2>/dev/null)" || die "aapt2 could not read the APK"
@@ -787,6 +788,11 @@ MINSDK="$(bget "s/^minSdkVersion:'\([^']*\)'.*/\1/p")"
 TGTSDK="$(bget "s/^targetSdkVersion:'\([^']*\)'.*/\1/p")"
 LABEL="$(bget "s/^application-label:'\(.*\)'$/\1/p")"
 LOCALES="$(bget "s/^locales: //p" | tr -d "'")"
+LAUNCH_ACT="$(bget "s/^launchable-activity: name='\([^']*\)'.*/\1/p")"
+TV_ACT="$(bget "s/^leanback-launchable-activity: name='\([^']*\)'.*/\1/p")"
+# A TV app that requires Android TV lists the Leanback feature as required.
+NEEDS_TV=0
+printf '%s\n' "$BADGING" | grep -qE "^[[:space:]]*uses-feature: name='android.software.leanback'$" && NEEDS_TV=1
 mapfile -t PERMS < <(printf '%s\n' "$BADGING" | sed -n "s/^uses-permission: name='\([^']*\)'.*/\1/p")
 MANIFEST="$("$AAPT2" dump xmltree --file AndroidManifest.xml "$APK" 2>/dev/null || true)"
 SHA256="$(sha256 "$APK")"
@@ -798,7 +804,11 @@ say "${B}$LABEL${R} $APPID $VNAME ($VCODE) — minSdk $MINSDK, targetSdk $TGTSDK
 note "sha256 $SHA256"
 
 if [ -n "$DEV_SDK" ] && [ -n "$MINSDK" ] && [ "$MINSDK" -gt "$DEV_SDK" ]; then
-  die "the app needs Android SDK $MINSDK, the phone has $DEV_SDK"
+  die "the app needs Android SDK $MINSDK, the device has $DEV_SDK"
+fi
+if [ "$NO_DEVICE" = 0 ] && [ "$NEEDS_TV" = 1 ] \
+   && ! ash pm list features | grep -qx 'feature:android.software.leanback'; then
+  die "this app needs Android TV; the device is not one"
 fi
 
 # ---- permissions
@@ -834,7 +844,7 @@ printf '%s\n' "$MANIFEST" | grep -qE 'testOnly\([^)]*\)=(true|0xffffffff)' && TE
 HAS_EN=n
 case " $LOCALES " in *" en "*|*" en-"*|*" en_"*) HAS_EN=y ;; esac
 if [ "$HAS_EN" = y ]; then ok "has English strings"
-else note "languages: ${LOCALES:-unknown} — check on the phone whether the default one is English"; fi
+else note "languages: ${LOCALES:-unknown} — check on the device whether the default one is English"; fi
 
 # ---- trackers, addresses in the code, WebView
 PRIMARY_ABI="-"
@@ -966,11 +976,11 @@ if [ -n "$MR_SRC" ] && [ -n "$MR_SHA" ]; then
   fi
 fi
 
-# ================================================================ 4. on the phone
+# ================================================================ 4. on the device
 CRASHED=n; START_PROMPT=""; CONN_START=(); CONN_LATER=(); CAPTURED=n; PCAP_ERR=""
 SHOT=""
 if [ "$NO_DEVICE" = 0 ]; then
-  step "4. On the phone"
+  step "4. On the device"
   # The app and PCAPdroid's prompts would open behind the lock screen.
   phone_locked() {
     { ash dumpsys window; ash dumpsys activity activities; } \
@@ -978,9 +988,9 @@ if [ "$NO_DEVICE" = 0 ]; then
   }
   if phone_locked; then
     ash input keyevent KEYCODE_WAKEUP >/dev/null || true
-    act "unlock the phone — waiting…"
+    act "unlock the device — waiting…"
     for _ in $(seq 1 120); do phone_locked || break; sleep 1; done
-    if phone_locked; then warn "the phone still looks locked — the app may open behind the lock screen"
+    if phone_locked; then warn "the device still looks locked — the app may open behind the lock screen"
     else ok "unlocked"; fi
   fi
   if [ -n "$(ash pm path "$APPID")" ]; then
@@ -1012,7 +1022,7 @@ if [ "$NO_DEVICE" = 0 ]; then
         -e pcap_dump_mode pcap_file -e pcap_name "$PCAP_NAME" -e app_filter "$APPID" \
         -e block_quic always -e auto_block_private_dns true "${KEY[@]}" >/dev/null
       if [ "${#KEY[@]}" -eq 0 ]; then
-        act "on the phone: allow PCAPdroid's control prompt (and the VPN prompt, the first time)"
+        act "on the device: allow PCAPdroid's control prompt (and the VPN prompt, the first time)"
         note "tip: an API key in $CONF/pcapdroid-api-key skips the first prompt (see --help)"
       fi
       say "waiting for PCAPdroid to start recording…"
@@ -1030,10 +1040,14 @@ if [ "$NO_DEVICE" = 0 ]; then
 
   "${ADB[@]}" logcat -c 2>/dev/null || true
   T_LAUNCH="$(ash date +%s)"
-  if "${ADB[@]}" shell monkey -p "$APPID" -c android.intent.category.LAUNCHER 1 2>&1 | grep -q 'No activities found'; then
+  if [ -z "$LAUNCH_ACT" ] && [ -n "$TV_ACT" ]; then
+    # A TV-only app has no ordinary launcher entry, only the Leanback one.
+    "${ADB[@]}" shell am start -n "$APPID/$TV_ACT" >/dev/null 2>&1 \
+      || warn "could not open its TV activity — open it by hand"
+  elif "${ADB[@]}" shell monkey -p "$APPID" -c android.intent.category.LAUNCHER 1 2>&1 | grep -q 'No activities found'; then
     warn "the app has no launcher icon to open — open it by hand"
   fi
-  act "watching the first $WATCH seconds — don't touch the phone yet"
+  act "watching the first $WATCH seconds — don't touch the device yet"
   for _ in $(seq 1 "$WATCH"); do
     sleep 1
     if [ -z "$START_PROMPT" ] && ash dumpsys window | grep -E 'mCurrentFocus=' | grep -q GrantPermissionsActivity; then
@@ -1131,7 +1145,7 @@ MSTORAGE=y; case " ${P_SPECIAL[*]} " in *" MANAGE_EXTERNAL_STORAGE "*) MSTORAGE=
 vt_collect
 VT_OK=s; [ -n "$VT_RESULT" ] && [ "$VT_MAL" = 0 ] && VT_OK=y
 
-[ "$NO_DEVICE" = 1 ] && act "no phone in this run — answer from what you saw on a device, or s to skip"
+[ "$NO_DEVICE" = 1 ] && act "no device in this run — answer from what you saw on a device, or s to skip"
 
 say "${B}Basic function${R}"
 def=y; [ "$CRASHED" = n ] || def=n
@@ -1313,7 +1327,7 @@ else
 fi
 
 if [ "$NO_DEVICE" = 0 ] && [ "$KEEP" = 0 ]; then
-  confirm "Remove the app from the phone now?" y && "${ADB[@]}" uninstall "$APPID" >/dev/null && ok "removed"
+  confirm "Remove the app from the device now?" y && "${ADB[@]}" uninstall "$APPID" >/dev/null && ok "removed"
 fi
 
 exit 0
