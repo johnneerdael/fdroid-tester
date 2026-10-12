@@ -724,7 +724,7 @@ def png_size(path):
             head = f.read(24)
     except OSError:
         return 0, 0
-    if head[:8] != b"\x89PNG\r\n\x1a\n":
+    if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n":   # cut short: no size
         return 0, 0
     return struct.unpack(">II", head[16:24])
 
@@ -1174,8 +1174,10 @@ if [ "$NO_DEVICE" = 0 ]; then
   "${ADB[@]}" logcat -c 2>/dev/null || true
   T_LAUNCH="$(ash date +%s)"
   if [ -z "$LAUNCH_ACT" ] && [ -n "$TV_ACT" ]; then
-    # A TV-only app has no ordinary launcher entry, only the Leanback one.
-    "${ADB[@]}" shell am start -n "$APPID/$TV_ACT" >/dev/null 2>&1 \
+    # A TV-only app has no ordinary launcher entry, only the Leanback one:
+    # start it with the intent the TV home screen sends.
+    "${ADB[@]}" shell am start -a android.intent.action.MAIN \
+      -c android.intent.category.LEANBACK_LAUNCHER -n "$APPID/$TV_ACT" >/dev/null 2>&1 \
       || warn "could not open its TV activity — open it by hand"
   elif "${ADB[@]}" shell monkey -p "$APPID" -c android.intent.category.LAUNCHER 1 2>&1 | grep -q 'No activities found'; then
     warn "the app has no launcher icon to open — open it by hand"
