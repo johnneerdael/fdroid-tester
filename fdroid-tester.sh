@@ -703,26 +703,36 @@ def png_size(path):
 
 def cmd_embed(report, uploads, folder):
     up = {}
-    for line in open(uploads, encoding="utf-8"):
+    for line in open(uploads, encoding="utf-8", errors="replace"):
         f, _, path = line.rstrip("\n").partition("\t")
         if f and path:
             up[f] = path
-    for line in open(report, encoding="utf-8"):
-        m = re.match(r"- `([^`]+\.png)`(?: — (.*))?$", line.rstrip("\n"))
+    # a byte that is not UTF-8 (notes typed in another encoding) must not stop the post
+    out = open(sys.stdout.fileno(), "w", encoding="utf-8", errors="replace", closefd=False)
+    section = False                        # only the screenshot list is rewritten
+    for line in open(report, encoding="utf-8", errors="replace"):
+        if line.startswith("**Screenshots:**"):
+            section = True
+        elif line.startswith("<details>"):
+            section = False
+        m = section and re.match(r"- `([^`]+\.png)`(?: — (.*))?$", line.rstrip("\n"))
         if not m:
-            print(line, end="")
+            out.write(line)
             continue
         f, cap = m.group(1), m.group(2) or ""
         text = cap or f
+        shown = text.replace("\\", "\\\\").replace("`", "\\`")
         if f not in up:
-            print(f"- {text} _(screenshot could not be uploaded)_")
+            out.write(f"- {shown} _(screenshot could not be uploaded)_\n")
             continue
         url = up[f]
         if url.startswith("/-/"):          # uploaded to another project: a full address
             url = "https://gitlab.com" + url
         w, h = png_size(f"{folder}/{f}")
-        alt = text.replace("[", "(").replace("]", ")")
-        print(f"- {text}<br>![{alt}]({url}){{width={240 if h > w else 480}}}")
+        # brackets, backticks and backslashes would end or swallow the image
+        alt = text.translate(str.maketrans("[]`\\", "()'/"))
+        out.write(f"- {shown}<br>![{alt}]({url}){{width={240 if h > w else 480}}}\n")
+    out.flush()
 
 {"mr": cmd_mr, "cq": cmd_cq, "static": cmd_static, "pcap": cmd_pcap,
  "vt": cmd_vt, "jget": cmd_jget, "cats": cmd_cats, "embed": cmd_embed}[sys.argv[1]](*sys.argv[2:])
@@ -1022,13 +1032,20 @@ add_shot() {  # add_shot <file in the review folder> <caption>
   SHOTS+=("$1"$'\t'"$2")
   printf '%s\t%s\n' "$1" "$2" >> "$OUT/shots.tsv"
 }
-# check_alive — a crash while the app is in use is said at once, not only at the end
+# check_alive — a crash while the app is in use is said at once, not only at
+# the end. A process that is gone without a crash log is said too: the tester
+# may have closed it, so they judge it, with "no" as the answer offered.
+GONE=n
 check_alive() {
   [ "$CRASHED" = n ] || return 0
-  "${ADB[@]}" logcat -d -b crash 2>/dev/null | grep -q "Process: $APPID" || return 0
-  "${ADB[@]}" logcat -d -b crash > "$OUT/crash.log" 2>/dev/null || true
-  warn "it crashed while you used it (crash.log saved)"
-  CRASHED=later
+  if "${ADB[@]}" logcat -d -b crash 2>/dev/null | grep -q "Process: $APPID"; then
+    "${ADB[@]}" logcat -d -b crash > "$OUT/crash.log" 2>/dev/null || true
+    warn "it crashed while you used it (crash.log saved)"
+    CRASHED=later
+  elif [ "$GONE" = n ] && [ -z "$(ash pidof "$APPID")" ]; then
+    GONE=y
+    warn "the app is not running any more — unless you closed it, it stopped unexpectedly"
+  fi
 }
 take_shot() {  # take_shot — a screenshot now, with a caption typed by the tester
   local n=1 f cap
@@ -1167,11 +1184,7 @@ EOF
     esac
   done
 
-  if [ "$CRASHED" = n ] && "${ADB[@]}" logcat -d -b crash 2>/dev/null | grep -q "Process: $APPID"; then
-    "${ADB[@]}" logcat -d -b crash > "$OUT/crash.log" 2>/dev/null || true
-    warn "it crashed while you used it (crash.log saved)"
-    CRASHED=later
-  fi
+  check_alive
 
   if [ "$CAPTURED" = y ]; then
     capture_stop || warn "PCAPdroid is still recording — stop it in the app; the file may be cut short"
@@ -1224,7 +1237,7 @@ VT_OK=s; [ -n "$VT_RESULT" ] && [ "$VT_MAL" = 0 ] && VT_OK=y
 [ "$NO_DEVICE" = 1 ] && act "no device in this run — answer from what you saw on a device, or s to skip"
 
 say "${B}Basic function${R}"
-def=y; [ "$CRASHED" = n ] || def=n
+def=y; [ "$CRASHED" = n ] || def=n; [ "$GONE" = n ] || def=n
 yns Q_WORKS    "Did it start and work normally?" "$def"
 yns Q_FEATURES "Do the main features from its description work?" y
 yns Q_ICON     "Does it have its own icon (not the stock Android/Flutter one)?" y
@@ -1343,7 +1356,8 @@ REPORT="$OUT/report.md"
   if [ -n "$TESTER_NOTES" ]; then
     # two trailing spaces keep each line on its own line in Markdown
     printf '**Notes from the tester:**\n\n'
-    printf '%s' "$TESTER_NOTES" | sed 's/$/  /'
+    # bytes as they are: macOS's sed refuses a line that is not valid UTF-8
+    printf '%s' "$TESTER_NOTES" | LC_ALL=C sed 's/$/  /'
     printf '\n'
   fi
   if [ "${#SHOTS[@]}" -gt 0 ]; then
@@ -1359,6 +1373,7 @@ REPORT="$OUT/report.md"
   printf -- '- APK: `%s` (sha256 `%s`)\n' "${APK##*/}" "$SHA256"
   [ "$CRASHED" != n ] && printf -- '- Crashed (%s). Log:\n```\n%s\n```\n' \
     "$([ "$CRASHED" = y ] && echo "on start" || echo "while in use")" "$(head -40 "$OUT/crash.log" 2>/dev/null)"
+  [ "$GONE" = y ] && printf -- '- The app was not running any more when the test ended, and left no crash log (closed, or stopped).\n'
   [ -n "$START_PROMPT" ] && printf -- '- Asks for a permission on start: "%s"\n' "$START_PROMPT"
   [ "${#P_SPECIAL[@]}" -gt 0 ] && printf -- '- Special permissions: %s\n' "${P_SPECIAL[*]}"
   [ "${#P_RUNTIME[@]}" -gt 0 ] && printf -- '- Runtime permissions: %s\n' "${P_RUNTIME[*]}"
@@ -1395,13 +1410,16 @@ if [ -n "$EDIT_CMD" ] && confirm "Edit the report before posting?" "$([ "$LEFT" 
   $EDIT_CMD "$REPORT" || warn "the editor exited with an error"
 fi
 # upload_shot <png> — uploads it for the comment and prints its path on
-# gitlab.com: the merge request's own fork first, then fdroiddata.
+# gitlab.com: to fdroiddata first, so the image lasts as long as the merge
+# request, else to the merge request's own fork. Uploads must be multipart
+# (--form); -F would send the image as a JSON string.
 upload_shot() {
   local p v
-  for p in "$MR_SRC" "${MR_REPO//\//%2F}"; do
+  for p in "${MR_REPO//\//%2F}" "$MR_SRC"; do
     [ -n "$p" ] || continue
-    glab api --method POST "projects/$p/uploads" -F "file=@$1" > "$WORK/up.json" 2>/dev/null || continue
+    glab api --method POST "projects/$p/uploads" --form "file=@$1" > "$WORK/up.json" 2>/dev/null || continue
     v="$(tool jget "$WORK/up.json" full_path)"
+    # a path relative to the project only works where the comment is posted
     if [ -z "$v" ] && [ "$p" = "${MR_REPO//\//%2F}" ]; then v="$(tool jget "$WORK/up.json" url)"; fi
     if [ -n "$v" ]; then printf '%s' "$v"; return 0; fi
   done
@@ -1412,13 +1430,17 @@ if [ "$CAN_POST" = 0 ]; then
 elif confirm "Post the report as a comment on $MR_URL?" y; then
   BODY="$REPORT"
   if [ "${#SHOTS[@]}" -gt 0 ]; then
-    say "uploading the screenshots…"
     : > "$WORK/uploads.tsv"
-    for s in "${SHOTS[@]}"; do
-      f="${s%%$'\t'*}"
-      if up="$(upload_shot "$OUT/$f")"; then printf '%s\t%s\n' "$f" "$up" >> "$WORK/uploads.tsv"
-      else warn "could not upload $f — the comment says so in its place"; fi
-    done
+    if ! glab api --help 2>&1 | grep -q -- '--form'; then
+      warn "glab is too old to upload screenshots (it needs --form) — the comment lists them by name"
+    else
+      say "uploading the screenshots…"
+      for s in "${SHOTS[@]}"; do
+        f="${s%%$'\t'*}"
+        if up="$(upload_shot "$OUT/$f")"; then printf '%s\t%s\n' "$f" "$up" >> "$WORK/uploads.tsv"
+        else warn "could not upload $f — the comment says so in its place"; fi
+      done
+    fi
     tool embed "$REPORT" "$WORK/uploads.tsv" "$OUT" > "$WORK/post.md"
     BODY="$WORK/post.md"
   fi
