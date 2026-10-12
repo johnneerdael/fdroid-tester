@@ -8,6 +8,7 @@
 # https://github.com/by-architect/fdroid-tester
 #
 #   fdroid-tester.sh <merge request link or number> [options]
+#   fdroid-tester.sh --apk FILE [merge request] [options]   a local APK
 #   fdroid-tester.sh --check          only check this machine and the device
 #
 # In order, after checking every tool, the device, PCAPdroid and the glab login:
@@ -41,11 +42,12 @@ PCAP_PKG="com.emanuelef.remote_capture"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/fdroid-tester"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/fdroid-tester"
 
-SERIAL=""; WATCH=15; NO_DEVICE=0; KEEP=0; MR_ARG=""; CHECK_ONLY=0; FORCE_VPN=0
+SERIAL=""; WATCH=15; NO_DEVICE=0; KEEP=0; MR_ARG=""; CHECK_ONLY=0; FORCE_VPN=0; APK_ARG=""
 
 usage() {
   cat <<EOF
 usage: fdroid-tester.sh <merge request link or number> [options]
+       fdroid-tester.sh --apk FILE [merge request link or number] [options]
        fdroid-tester.sh --check [-s SERIAL]
 
   e.g. fdroid-tester.sh https://gitlab.com/fdroid/fdroiddata/-/merge_requests/38458
@@ -57,6 +59,9 @@ options:
   --keep         leave the app installed at the end without asking
   --vpn          record with PCAPdroid's VPN even when the device has root
                  (with root, it records in root mode: no VPN prompt)
+  --apk FILE     test this APK instead of downloading the merge request's;
+                 without a merge request, nothing is read from or posted to
+                 gitlab.com
   --check        only check the tools, the device, PCAPdroid and the glab
                  login, then stop
   --version      print the version
@@ -82,6 +87,8 @@ while [ $# -gt 0 ]; do
     --no-device) NO_DEVICE=1 ;;
     --keep) KEEP=1 ;;
     --vpn) FORCE_VPN=1 ;;
+    --apk) APK_ARG="${2-}"; shift
+           [ -s "$APK_ARG" ] || { printf 'no such APK: %s\n' "$APK_ARG" >&2; exit 2; } ;;
     --check) CHECK_ONLY=1 ;;
     --version) printf 'fdroid-tester %s\n' "$VERSION"; exit 0 ;;
     -h|--help) usage; exit 0 ;;
@@ -116,7 +123,7 @@ die()   { printf '\n%sERROR: %s%s\n' "$RED" "$*" "$R" >&2; exit 1; }
 have()  { command -v "$1" >/dev/null 2>&1; }
 
 # Run with no link: say where to get one, rather than print the options.
-if [ -z "$MR_ARG" ] && [ "$CHECK_ONLY" = 0 ]; then
+if [ -z "$MR_ARG" ] && [ -z "$APK_ARG" ] && [ "$CHECK_ONLY" = 0 ]; then
   cat <<EOF
 
   ${B}Which app do you want to test?${R}
@@ -743,51 +750,56 @@ tool() { python3 "$WORK/tool.py" "$@"; }
 
 # ================================================================ 1. the MR
 step "1. Merge request"
-case "$MR_ARG" in
-  *[!0-9]*) IID="$(printf '%s' "$MR_ARG" | sed -nE 's#^(https?://)?gitlab\.com/fdroid/fdroiddata/-/merge_requests/([0-9]+).*#\2#p')" ;;
-  *) IID="$MR_ARG" ;;
-esac
-[ -n "$IID" ] || die "not an fdroiddata merge request: $MR_ARG"
-
-curl -fsS "$API/projects/${MR_REPO//\//%2F}/merge_requests/$IID" -o "$WORK/mr.json" \
-  || die "could not read merge request !$IID from gitlab.com"
-eval "$(tool mr "$WORK/mr.json")"
-say "${B}!$IID${R} $MR_TITLE"
-note "by @$MR_AUTHOR — $MR_URL"
-[ "$MR_STATE" = opened ] || warn "this merge request is $MR_STATE — testing it helps nobody now"
-case ",$MR_LABELS," in
-  *,review-requested,*) ok "labelled review-requested: waiting for a tester" ;;
-  *) note "labels: ${MR_LABELS:-none}" ;;
-esac
-
-# GitLab builds the report on request: 204 means "ask again in a moment".
-say "reading the Code Quality report…"
-CQ_URL="https://gitlab.com/$MR_REPO/-/merge_requests/$IID/codequality_reports.json"
-CQ_OK=0
-for _ in $(seq 1 20); do
-  code="$(curl -sS -o "$WORK/cq.json" -w '%{http_code}' "$CQ_URL" || true)"
-  [ "$code" = 200 ] && { CQ_OK=1; break; }
-  [ "$code" = 204 ] || break
-  sleep 3
-done
-[ "$CQ_OK" = 1 ] || die "no Code Quality report for !$IID (HTTP $code) — has its pipeline run?"
-
-APK_URLS=(); CI_PERMS=(); CI_WARN=(); SUMMARY=""
-while IFS=$'\t' read -r kind a b; do
-  case "$kind" in
-    APK)     APK_URLS+=("$a") ;;
-    PERM)    CI_PERMS+=("$b") ;;
-    WARN)    CI_WARN+=("$a: $b") ;;
-    SUMMARY) SUMMARY="$a" ;;
+IID=""; MR_URL=""; MR_SRC=""; MR_SHA=""; APK_URLS=(); CI_PERMS=(); CI_WARN=(); SUMMARY=""
+if [ -z "$MR_ARG" ]; then
+  note "none — testing ${APK_ARG##*/} on its own"
+else
+  case "$MR_ARG" in
+    *[!0-9]*) IID="$(printf '%s' "$MR_ARG" | sed -nE 's#^(https?://)?gitlab\.com/fdroid/fdroiddata/-/merge_requests/([0-9]+).*#\2#p')" ;;
+    *) IID="$MR_ARG" ;;
   esac
-done < <(tool cq "$WORK/cq.json")
+  [ -n "$IID" ] || die "not an fdroiddata merge request: $MR_ARG"
 
-if [ "${#CI_WARN[@]}" -gt 0 ]; then
-  warn "CI warnings the maintainers will also see:"
-  printf '%s\n' "${CI_WARN[@]}" | sed 's/^/       /'
+  curl -fsS "$API/projects/${MR_REPO//\//%2F}/merge_requests/$IID" -o "$WORK/mr.json" \
+    || die "could not read merge request !$IID from gitlab.com"
+  eval "$(tool mr "$WORK/mr.json")"
+  say "${B}!$IID${R} $MR_TITLE"
+  note "by @$MR_AUTHOR — $MR_URL"
+  [ "$MR_STATE" = opened ] || warn "this merge request is $MR_STATE — testing it helps nobody now"
+  case ",$MR_LABELS," in
+    *,review-requested,*) ok "labelled review-requested: waiting for a tester" ;;
+    *) note "labels: ${MR_LABELS:-none}" ;;
+  esac
+
+  # GitLab builds the report on request: 204 means "ask again in a moment".
+  say "reading the Code Quality report…"
+  CQ_URL="https://gitlab.com/$MR_REPO/-/merge_requests/$IID/codequality_reports.json"
+  CQ_OK=0
+  for _ in $(seq 1 20); do
+    code="$(curl -sS -o "$WORK/cq.json" -w '%{http_code}' "$CQ_URL" || true)"
+    [ "$code" = 200 ] && { CQ_OK=1; break; }
+    [ "$code" = 204 ] || break
+    sleep 3
+  done
+  [ "$CQ_OK" = 1 ] || die "no Code Quality report for !$IID (HTTP $code) — has its pipeline run?"
+
+  while IFS=$'\t' read -r kind a b; do
+    case "$kind" in
+      APK)     APK_URLS+=("$a") ;;
+      PERM)    CI_PERMS+=("$b") ;;
+      WARN)    CI_WARN+=("$a: $b") ;;
+      SUMMARY) SUMMARY="$a" ;;
+    esac
+  done < <(tool cq "$WORK/cq.json")
+
+  if [ "${#CI_WARN[@]}" -gt 0 ]; then
+    warn "CI warnings the maintainers will also see:"
+    printf '%s\n' "${CI_WARN[@]}" | sed 's/^/       /'
+  fi
+  if [ "${#APK_URLS[@]}" -gt 0 ]; then ok "${#APK_URLS[@]} APK(s) in the report"
+  elif [ -z "$APK_ARG" ]; then die "the report has no APK — the 'fdroid build' job failed or has not run; nothing to test yet"
+  fi
 fi
-[ "${#APK_URLS[@]}" -gt 0 ] || die "the report has no APK — the 'fdroid build' job failed or has not run; nothing to test yet"
-ok "${#APK_URLS[@]} APK(s) in the report"
 
 # ================================================================ 2. APK
 step "2. APK"
@@ -806,24 +818,31 @@ rank() {
 }
 
 APK=""; BEST=999; APK_ABIS=""
-for url in "${APK_URLS[@]}"; do
-  f="$PWD/${url##*/}"
-  if [ -s "$f" ] && unzip -Z1 "$f" >/dev/null 2>&1; then
-    note "already here: ${f##*/}"
-  else
-    say "downloading ${f##*/}"
-    if ! curl -fL --progress-bar -o "$f.part" "$url"; then
-      rm -f "$f.part"
-      warn "could not download it — CI artifacts expire; ask the author to re-run the pipeline"
-      continue
+if [ -n "$APK_ARG" ]; then
+  APK="$(cd "$(dirname "$APK_ARG")" && pwd)/$(basename "$APK_ARG")"
+  APK_ABIS="$(apk_abis "$APK")"
+  note "  native code: ${APK_ABIS:-none}"
+  [ -n "$(rank "$APK_ABIS")" ] || die "${APK##*/} does not run on this device ($DEV_ABIS)"
+else
+  for url in "${APK_URLS[@]}"; do
+    f="$PWD/${url##*/}"
+    if [ -s "$f" ] && unzip -Z1 "$f" >/dev/null 2>&1; then
+      note "already here: ${f##*/}"
+    else
+      say "downloading ${f##*/}"
+      if ! curl -fL --progress-bar -o "$f.part" "$url"; then
+        rm -f "$f.part"
+        warn "could not download it — CI artifacts expire; ask the author to re-run the pipeline"
+        continue
+      fi
+      mv "$f.part" "$f"
     fi
-    mv "$f.part" "$f"
-  fi
-  abis="$(apk_abis "$f")"; r="$(rank "$abis")"
-  note "  native code: ${abis:-none}"
-  if [ -n "$r" ] && [ "$r" -lt "$BEST" ]; then APK="$f"; BEST="$r"; APK_ABIS="$abis"; fi
-done
-[ -n "$APK" ] || die "none of the APKs runs on this device ($DEV_ABIS)"
+    abis="$(apk_abis "$f")"; r="$(rank "$abis")"
+    note "  native code: ${abis:-none}"
+    if [ -n "$r" ] && [ "$r" -lt "$BEST" ]; then APK="$f"; BEST="$r"; APK_ABIS="$abis"; fi
+  done
+  [ -n "$APK" ] || die "none of the APKs runs on this device ($DEV_ABIS)"
+fi
 ok "testing ${APK##*/}"
 
 BADGING="$("$AAPT2" dump badging "$APK" 2>/dev/null)" || die "aapt2 could not read the APK"
@@ -846,7 +865,11 @@ SHA256="$(sha256 "$APK")"
 
 OUT="$PWD/${APPID}_${VCODE}-review"
 mkdir -p "$OUT"
-cp "$WORK/cq.json" "$OUT/codequality.json"
+[ -n "$MR_ARG" ] && cp "$WORK/cq.json" "$OUT/codequality.json"
+if [ -n "$APK_ARG" ] && [ "${#APK_URLS[@]}" -gt 0 ] \
+   && ! printf '%s\n' "${APK_URLS[@]##*/}" | grep -qxF "${APPID}_${VCODE}.apk"; then
+  warn "${APPID}_${VCODE}.apk is not one this merge request's CI built — testing it anyway"
+fi
 say "${B}$LABEL${R} $APPID $VNAME ($VCODE) — minSdk $MINSDK, targetSdk $TGTSDK"
 note "sha256 $SHA256"
 
@@ -1250,7 +1273,8 @@ WORKS="$Q_WORKS"; [ "$CRASHED" = n ] || WORKS=n
 
 say "${B}Policy${R}"
 yns Q_POLICY   "Anything against the Inclusion Policy (ads, paid unlock, non-free service)?" n
-if [ -n "$CATS" ]; then yns Q_CATS "Do the categories fit ($CATS)?" y
+if [ -z "$MR_ARG" ]; then yns Q_CATS "Do the app's categories fit? (no merge request, so no metadata to read)" s
+elif [ -n "$CATS" ]; then yns Q_CATS "Do the categories fit ($CATS)?" y
 else yns Q_CATS "The metadata sets no categories — is that right?" n; fi
 yns Q_TERMS    "Did it ask you to accept terms other than the FOSS license?" n
 
@@ -1410,51 +1434,55 @@ ok "saved to ${REPORT#"$PWD"/}"
 # The report goes to the same merge request, as a comment from your GitLab
 # account. Nothing is posted without a yes, and the boxes still unchecked can
 # be fixed in an editor first.
-step "7. Post to !$IID"
-LEFT="$(grep -c '(not checked)' "$REPORT" || true)"
-[ "$LEFT" -gt 0 ] && warn "$LEFT box(es) still say (not checked)"
-if [ -n "$EDIT_CMD" ] && confirm "Edit the report before posting?" "$([ "$LEFT" -gt 0 ] && echo y || echo n)"; then
-  $EDIT_CMD "$REPORT" || warn "the editor exited with an error"
-fi
-# upload_shot <png> — uploads it for the comment and prints its path on
-# gitlab.com: the merge request's own fork first, then fdroiddata.
-upload_shot() {
-  local p v
-  for p in "$MR_SRC" "${MR_REPO//\//%2F}"; do
-    [ -n "$p" ] || continue
-    glab api --method POST "projects/$p/uploads" -F "file=@$1" > "$WORK/up.json" 2>/dev/null || continue
-    v="$(tool jget "$WORK/up.json" full_path)"
-    if [ -z "$v" ] && [ "$p" = "${MR_REPO//\//%2F}" ]; then v="$(tool jget "$WORK/up.json" url)"; fi
-    if [ -n "$v" ]; then printf '%s' "$v"; return 0; fi
-  done
-  return 1
-}
-if [ "$CAN_POST" = 0 ]; then
-  note "glab is not ready (see the checks at the top) — paste ${REPORT#"$PWD"/} into $MR_URL yourself"
-elif confirm "Post the report as a comment on $MR_URL?" y; then
-  BODY="$REPORT"
-  if [ "${#SHOTS[@]}" -gt 0 ]; then
-    say "uploading the screenshots…"
-    : > "$WORK/uploads.tsv"
-    for s in "${SHOTS[@]}"; do
-      f="${s%%$'\t'*}"
-      if up="$(upload_shot "$OUT/$f")"; then printf '%s\t%s\n' "$f" "$up" >> "$WORK/uploads.tsv"
-      else warn "could not upload $f — the comment says so in its place"; fi
-    done
-    tool embed "$REPORT" "$WORK/uploads.tsv" "$OUT" > "$WORK/post.md"
-    BODY="$WORK/post.md"
-  fi
-  if glab api --method POST "projects/${MR_REPO//\//%2F}/merge_requests/$IID/notes" \
-       -F "body=@$BODY" > "$WORK/note.json" 2>&1; then
-    NOTE_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id", ""))' \
-               "$WORK/note.json" 2>/dev/null || true)"
-    ok "posted: $MR_URL${NOTE_ID:+#note_$NOTE_ID}"
-  else
-    warn "glab could not post it:"; sed 's/^/     /' "$WORK/note.json" | head -5
-    note "paste ${REPORT#"$PWD"/} into $MR_URL yourself"
-  fi
+if [ -z "$IID" ]; then
+  note "no merge request — the report stays in ${REPORT#"$PWD"/}"
 else
-  note "not posted — it stays in ${REPORT#"$PWD"/}"
+  step "7. Post to !$IID"
+  LEFT="$(grep -c '(not checked)' "$REPORT" || true)"
+  [ "$LEFT" -gt 0 ] && warn "$LEFT box(es) still say (not checked)"
+  if [ -n "$EDIT_CMD" ] && confirm "Edit the report before posting?" "$([ "$LEFT" -gt 0 ] && echo y || echo n)"; then
+    $EDIT_CMD "$REPORT" || warn "the editor exited with an error"
+  fi
+  # upload_shot <png> — uploads it for the comment and prints its path on
+  # gitlab.com: the merge request's own fork first, then fdroiddata.
+  upload_shot() {
+    local p v
+    for p in "$MR_SRC" "${MR_REPO//\//%2F}"; do
+      [ -n "$p" ] || continue
+      glab api --method POST "projects/$p/uploads" -F "file=@$1" > "$WORK/up.json" 2>/dev/null || continue
+      v="$(tool jget "$WORK/up.json" full_path)"
+      if [ -z "$v" ] && [ "$p" = "${MR_REPO//\//%2F}" ]; then v="$(tool jget "$WORK/up.json" url)"; fi
+      if [ -n "$v" ]; then printf '%s' "$v"; return 0; fi
+    done
+    return 1
+  }
+  if [ "$CAN_POST" = 0 ]; then
+    note "glab is not ready (see the checks at the top) — paste ${REPORT#"$PWD"/} into $MR_URL yourself"
+  elif confirm "Post the report as a comment on $MR_URL?" y; then
+    BODY="$REPORT"
+    if [ "${#SHOTS[@]}" -gt 0 ]; then
+      say "uploading the screenshots…"
+      : > "$WORK/uploads.tsv"
+      for s in "${SHOTS[@]}"; do
+        f="${s%%$'\t'*}"
+        if up="$(upload_shot "$OUT/$f")"; then printf '%s\t%s\n' "$f" "$up" >> "$WORK/uploads.tsv"
+        else warn "could not upload $f — the comment says so in its place"; fi
+      done
+      tool embed "$REPORT" "$WORK/uploads.tsv" "$OUT" > "$WORK/post.md"
+      BODY="$WORK/post.md"
+    fi
+    if glab api --method POST "projects/${MR_REPO//\//%2F}/merge_requests/$IID/notes" \
+         -F "body=@$BODY" > "$WORK/note.json" 2>&1; then
+      NOTE_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id", ""))' \
+                 "$WORK/note.json" 2>/dev/null || true)"
+      ok "posted: $MR_URL${NOTE_ID:+#note_$NOTE_ID}"
+    else
+      warn "glab could not post it:"; sed 's/^/     /' "$WORK/note.json" | head -5
+      note "paste ${REPORT#"$PWD"/} into $MR_URL yourself"
+    fi
+  else
+    note "not posted — it stays in ${REPORT#"$PWD"/}"
+  fi
 fi
 
 if [ "$NO_DEVICE" = 0 ] && [ "$KEEP" = 0 ]; then
