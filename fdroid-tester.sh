@@ -245,7 +245,11 @@ if have sha256sum || have shasum; then row ok sha256 "$(command -v sha256sum || 
 else row fail sha256 "sha256sum (coreutils) or shasum is needed"; fi
 if AAPT2="$(find_aapt2)"; then row ok aapt2 "$AAPT2"
 else row fail aapt2 "not found — install Android build-tools, or set ANDROID_HOME"; fi
-if curl -fsS -m 20 -o /dev/null "$API/projects/${MR_REPO//\//%2F}" 2>/dev/null; then
+# A local APK without a merge request needs nothing from gitlab.com.
+LOCAL_ONLY=0; [ -n "$APK_ARG" ] && [ -z "$MR_ARG" ] && LOCAL_ONLY=1
+if [ "$LOCAL_ONLY" = 1 ]; then
+  row info gitlab.com "not needed without a merge request"
+elif curl -fsS -m 20 -o /dev/null "$API/projects/${MR_REPO//\//%2F}" 2>/dev/null; then
   row ok gitlab.com "reachable"
 else
   row fail gitlab.com "cannot reach $API — check the network"
@@ -321,7 +325,9 @@ else
 fi
 
 # --- posting the report
-if ! have glab; then
+if [ "$LOCAL_ONLY" = 1 ]; then
+  row info glab "not needed without a merge request"
+elif ! have glab; then
   row warn glab "not installed — you paste the report yourself (https://gitlab.com/gitlab-org/cli)"
 elif ! glab auth status --hostname gitlab.com >/dev/null 2>&1; then
   row warn glab "not logged in to gitlab.com — run: glab auth login --hostname gitlab.com"
@@ -878,9 +884,11 @@ SHA256="$(sha256 "$APK")"
 OUT="$PWD/${APPID}_${VCODE}-review"
 mkdir -p "$OUT"
 [ -n "$MR_ARG" ] && cp "$WORK/cq.json" "$OUT/codequality.json"
+NOT_FROM_CI=0
 if [ -n "$APK_ARG" ] && [ "${#APK_URLS[@]}" -gt 0 ] \
    && ! printf '%s\n' "${APK_URLS[@]##*/}" | grep -qxF "${APPID}_${VCODE}.apk"; then
   warn "${APPID}_${VCODE}.apk is not one this merge request's CI built — testing it anyway"
+  NOT_FROM_CI=1
 fi
 say "${B}$LABEL${R} $APPID $VNAME ($VCODE) — minSdk $MINSDK, targetSdk $TGTSDK"
 note "sha256 $SHA256"
@@ -1417,6 +1425,13 @@ REPORT="$OUT/report.md"
 
   printf '<details>\n<summary>Details</summary>\n\n'
   printf -- '- APK: `%s` (sha256 `%s`)\n' "${APK##*/}" "$SHA256"
+  # a maintainer reading the comment must know the CI build was not the one tested
+  if [ -n "$APK_ARG" ] && [ -n "$IID" ]; then
+    printf -- "- Tested a local APK, not one downloaded from this merge request's CI.\n"
+    if [ "$NOT_FROM_CI" = 1 ]; then
+      printf -- "- It is not one of the APKs this merge request's CI built (\`%s\`).\n" "${APPID}_${VCODE}.apk"
+    fi
+  fi
   [ "$CRASHED" != n ] && printf -- '- Crashed (%s). Log:\n```\n%s\n```\n' \
     "$([ "$CRASHED" = y ] && echo "on start" || echo "while in use")" "$(head -40 "$OUT/crash.log" 2>/dev/null)"
   [ "$GONE" = y ] && printf -- '- The app was not running any more when the test ended, and left no crash log (closed, or stopped).\n'
