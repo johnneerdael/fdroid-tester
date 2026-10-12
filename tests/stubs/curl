@@ -12,6 +12,8 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+# FAKE_GITLAB_DOWN: gitlab.com cannot be reached
+if [ -n "${FAKE_GITLAB_DOWN:-}" ]; then case "$url" in *gitlab.com*) exit 7 ;; esac; fi
 serve() { if [ -n "$out" ]; then cp "$1" "$out"; else cat "$1"; fi; }
 code=200
 case "$url" in
