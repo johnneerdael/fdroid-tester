@@ -899,9 +899,15 @@ note "sha256 $SHA256"
 if [ -n "$DEV_SDK" ] && [ -n "$MINSDK" ] && [ "$MINSDK" -gt "$DEV_SDK" ]; then
   die "the app needs Android SDK $MINSDK, the device has $DEV_SDK"
 fi
+# Some Android TV boxes do not declare Leanback, yet run TV apps installed
+# with adb: say so, and let the tester decide.
+NO_LEANBACK=0
 if [ "$NO_DEVICE" = 0 ] && [ "$NEEDS_TV" = 1 ] \
    && ! ash pm list features | grep -qx 'feature:android.software.leanback'; then
-  die "this app needs Android TV; the device is not one"
+  NO_LEANBACK=1
+  warn "this app requires Android TV, and this device does not declare it (android.software.leanback)"
+  note "F-Droid's client would hide the app on this device; installed with adb, it may still run"
+  confirm "Test it anyway?" y || exit 1
 fi
 
 # ---- permissions
@@ -1442,6 +1448,9 @@ REPORT="$OUT/report.md"
 
   printf '<details>\n<summary>Details</summary>\n\n'
   printf -- '- APK: `%s` (sha256 `%s`)\n' "${APK##*/}" "$SHA256"
+  if [ "$NO_LEANBACK" = 1 ]; then
+    printf -- "- The device does not declare Android TV (android.software.leanback), which the app requires; installed with adb anyway.\n"
+  fi
   # a maintainer reading the comment must know the CI build was not the one tested
   if [ -n "$APK_ARG" ] && [ -n "$IID" ]; then
     printf -- "- Tested a local APK, not one downloaded from this merge request's CI.\n"
