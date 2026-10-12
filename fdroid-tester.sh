@@ -1356,6 +1356,9 @@ if [ "$VT_OK" = s ]; then
     if open_url "$VT_LINK"; then act "VirusTotal is open in your browser"
     else act "open $VT_LINK"; fi
     act "if it says the file is unknown, drag this file onto the page:"
+    if [ -n "$APK_ARG" ]; then
+      warn "this is a local file: VirusTotal shares uploads with its partners — upload it only if it may be public"
+    fi
     note "  $APK"
     yns VT_OK "Do all or most scanners say it is clean?" y
   fi

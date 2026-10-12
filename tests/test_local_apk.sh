@@ -74,3 +74,9 @@ test_local_apk_is_not_uploaded_to_virustotal_by_default() {
   assert_out "local file.*\[y/N\]"
   refute_has "$FAKE/curl.log" "file=@"
 }
+
+test_local_apk_manual_virustotal_step_warns_before_upload() {
+  run_tester "" -w 1 --keep --apk "$APKS/phone.apk"
+  assert_rc 0
+  assert_out "local file: VirusTotal shares uploads with its partners"
+}
