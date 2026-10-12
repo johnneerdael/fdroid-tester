@@ -36,10 +36,14 @@ case "$line" in
   "am start -n com.emanuelef.remote_capture/.activities.CaptureCtrl -e action stop"*) rm -f "$FAKE/capturing" ;;
   "pm path "*) [ -e "$FAKE/installed" ] && echo "package:/data/app/${line#pm path }/base.apk" ;;
   "pm list features") cat "$FAKE/features" ;;
+  "command -v su") [ -e "$FAKE/root" ] && echo /system/bin/su ;;
   "su -c id")
     if [ -e "$FAKE/root" ]; then echo "uid=0(root) gid=0(root)"
     else echo "/system/bin/sh: su: inaccessible or not found"; exit 127; fi ;;
-  "pidof "*) [ -e "$FAKE/installed" ] && echo 4321 ;;
+  "pidof "*)
+    # FAKE_GONE_AFTER=<n>: the process is gone once n screenshots were taken
+    if [ -n "${FAKE_GONE_AFTER:-}" ] && [ "$(caps)" -ge "$FAKE_GONE_AFTER" ]; then :
+    elif [ -e "$FAKE/installed" ]; then echo 4321; fi ;;
   "settings get global stay_on_while_plugged_in") echo 0 ;;
   "date +%s") date +%s ;;
   "monkey "*)
