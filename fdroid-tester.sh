@@ -56,7 +56,8 @@ options:
   --no-device    only download and look inside the APK, no device needed
   --keep         leave the app installed at the end without asking
   --vpn          record with PCAPdroid's VPN even when the device has root
-                 (with root, it records in root mode: no VPN prompt)
+                 (without --vpn, a rooted device records in root mode: no VPN
+                 prompt)
   --check        only check the tools, the device, PCAPdroid and the glab
                  login, then stop
   --version      print the version
@@ -294,10 +295,11 @@ else
         else row ok PCAPdroid "$PCAP_VER — it asks on the device; an API key skips that (--help)"; fi
       fi
       # With root, PCAPdroid records without its VPN: nothing to confirm on
-      # the device but its root access, once.
+      # the device but its root access, once. Only whether su is there is
+      # checked; running it here would ask to give the adb shell root too.
       if [ "$FORCE_VPN" = 1 ]; then
         row info root "not used (--vpn)"
-      elif ash su -c id | grep -q '^uid=0'; then
+      elif [ -n "$(ash command -v su)" ]; then
         ROOT=1; row ok root "yes — PCAPdroid records in root mode, no VPN prompt"
       else
         row info root "no — PCAPdroid records through its VPN"
@@ -1130,6 +1132,7 @@ if [ "$NO_DEVICE" = 0 ]; then
         CAPTURED=y; ok "PCAPdroid is recording"
       else
         warn "PCAPdroid did not start within 90 seconds"
+        [ "$ROOT" = 1 ] && note "in root mode it needs root access: if that was refused, run again with --vpn"
         confirm "Carry on without the network check?" y || die "start PCAPdroid once by hand, then run again"
       fi
     else
