@@ -2,6 +2,11 @@
 # Fake adb for the tests: one device, its state in $FAKE, every call logged.
 set -u
 printf '%s\n' "$*" >> "$FAKE/calls.log"
+# FAKE_ADB_READS_STDIN: like the real adb shell and exec-out, take whatever is
+# on standard input
+if [ -n "${FAKE_ADB_READS_STDIN:-}" ]; then
+  case " $* " in *" shell "*|*" exec-out "*) cat > /dev/null ;; esac
+fi
 [ "${1-}" = -s ] && shift 2
 cmd="${1-}"; shift || true
 caps() { cat "$FAKE/screencaps" 2>/dev/null || echo 0; }

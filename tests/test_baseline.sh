@@ -25,3 +25,11 @@ test_mr_run_records_traffic() {
   assert_out "connections in the first 1 seconds"
   assert_has "$(review_dir)/report.md" "example.org"
 }
+
+test_adb_does_not_take_the_testers_answers() {
+  use_mr phone.apk org.example.phone
+  export FAKE_GLAB_OFF=1 FAKE_ADB_READS_STDIN=1
+  run_tester 's\nthe main screen\n\n' -w 1 --keep 123
+  assert_rc 0
+  assert_has "$(review_dir)/report.md" '- `shot-01.png` — the main screen'
+}

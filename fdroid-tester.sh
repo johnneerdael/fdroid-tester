@@ -213,7 +213,9 @@ sha256() {
 }
 
 ADB=(adb); [ -n "$SERIAL" ] && ADB+=(-s "$SERIAL")
-ash() { "${ADB[@]}" shell "$@" 2>/dev/null | tr -d '\r'; }
+# adb shell reads standard input: it must never take the tester's answers
+adbc() { "${ADB[@]}" "$@" </dev/null; }
+ash() { adbc shell "$@" 2>/dev/null | tr -d '\r'; }
 
 # PCAPdroid records in its CaptureService: running means recording.
 capture_running() { ash dumpsys activity services "$PCAP_PKG" | grep -q 'CaptureService'; }
@@ -276,7 +278,7 @@ elif ! have adb; then
   row warn adb "not installed — the device part is off (install Android platform-tools)"
   NO_PHONE_FOUND=1
 else
-  "${ADB[@]}" start-server >/dev/null 2>&1 || true
+  adbc start-server >/dev/null 2>&1 || true
   row ok adb "$(adb version 2>/dev/null | sed -n 's/^Android Debug Bridge version //p')"
   mapfile -t DEVS < <(adb devices 2>/dev/null | awk 'NR > 1 && NF >= 2 { print $1 " " $2 }')
   STATE=""
@@ -374,12 +376,12 @@ print(next((a["browser_download_url"] for a in r.get("assets", []) if a["name"].
     rm -f "$apk"; warn "the download is not PCAPdroid (${pkg:-unreadable}) — not installing it"; return 1
   fi
   say "installing ${apk##*/} on the device…"
-  if ! out="$("${ADB[@]}" install -r "$apk" 2>&1)"; then
+  if ! out="$(adbc install -r "$apk" 2>&1)"; then
     if printf '%s' "$out" | grep -q UPDATE_INCOMPATIBLE; then
       warn "the PCAPdroid on the device is signed by someone else (another store)"
       confirm "Uninstall it and install the GitHub one? (its settings are lost)" n || return 1
-      "${ADB[@]}" uninstall "$PCAP_PKG" >/dev/null 2>&1 || true
-      out="$("${ADB[@]}" install "$apk" 2>&1)" || { printf '%s\n' "$out" | tail -2 | sed 's/^/     /'; return 1; }
+      adbc uninstall "$PCAP_PKG" >/dev/null 2>&1 || true
+      out="$(adbc install "$apk" 2>&1)" || { printf '%s\n' "$out" | tail -2 | sed 's/^/     /'; return 1; }
     else
       printf '%s\n' "$out" | tail -2 | sed 's/^/     /'; warn "install failed"; return 1
     fi
@@ -418,7 +420,7 @@ keep_awake() {
 }
 restore_awake() {
   [ -n "$STAYON_OLD" ] || return 0
-  "${ADB[@]}" shell settings put global stay_on_while_plugged_in "$STAYON_OLD" >/dev/null 2>&1 || true
+  adbc shell settings put global stay_on_while_plugged_in "$STAYON_OLD" >/dev/null 2>&1 || true
 }
 trap '[ -n "${VT_PID:-}" ] && kill "$VT_PID" 2>/dev/null; restore_awake; rm -rf "$WORK"' EXIT
 [ "$NO_DEVICE" = 0 ] && keep_awake
@@ -1090,8 +1092,8 @@ add_shot() {  # add_shot <file in the review folder> <caption>
 GONE=n
 check_alive() {
   [ "$CRASHED" = n ] || return 0
-  if "${ADB[@]}" logcat -d -b crash 2>/dev/null | grep -q "Process: $APPID"; then
-    "${ADB[@]}" logcat -d -b crash > "$OUT/crash.log" 2>/dev/null || true
+  if adbc logcat -d -b crash 2>/dev/null | grep -q "Process: $APPID"; then
+    adbc logcat -d -b crash > "$OUT/crash.log" 2>/dev/null || true
     warn "it crashed while you used it (crash.log saved)"
     CRASHED=later
   elif [ -n "$(ash pidof "$APPID")" ]; then
@@ -1105,7 +1107,7 @@ take_shot() {  # take_shot — a screenshot now, with a caption typed by the tes
   local n=1 f cap
   while [ -e "$OUT/$(printf 'shot-%02d.png' "$n")" ]; do n=$((n + 1)); done
   f="$(printf 'shot-%02d.png' "$n")"
-  if ! "${ADB[@]}" exec-out screencap -p > "$OUT/$f" 2>/dev/null || [ ! -s "$OUT/$f" ]; then
+  if ! adbc exec-out screencap -p > "$OUT/$f" 2>/dev/null || [ ! -s "$OUT/$f" ]; then
     rm -f "$OUT/$f"; warn "the screenshot failed"; return 0
   fi
   printf '   %scaption (Enter for none):%s ' "$B" "$R" >&2
@@ -1131,11 +1133,11 @@ if [ "$NO_DEVICE" = 0 ]; then
   if [ -n "$(ash pm path "$APPID")" ]; then
     warn "$APPID is already installed"
     if confirm "Uninstall it first, for a clean first start? (its data is deleted)" y; then
-      "${ADB[@]}" uninstall "$APPID" >/dev/null || die "could not uninstall it"
+      adbc uninstall "$APPID" >/dev/null || die "could not uninstall it"
     fi
   fi
   say "installing…"
-  if ! "${ADB[@]}" install -r "$APK" > "$WORK/install.log" 2>&1; then
+  if ! adbc install -r "$APK" > "$WORK/install.log" 2>&1; then
     cat "$WORK/install.log" | sed 's/^/     /'
     grep -q UPDATE_INCOMPATIBLE "$WORK/install.log" \
       && die "a copy signed with another key is installed — uninstall it and run again"
@@ -1180,15 +1182,15 @@ if [ "$NO_DEVICE" = 0 ]; then
     fi
   fi
 
-  "${ADB[@]}" logcat -c 2>/dev/null || true
+  adbc logcat -c 2>/dev/null || true
   T_LAUNCH="$(ash date +%s)"
   if [ -z "$LAUNCH_ACT" ] && [ -n "$TV_ACT" ]; then
     # A TV-only app has no ordinary launcher entry, only the Leanback one:
     # start it with the intent the TV home screen sends.
-    "${ADB[@]}" shell am start -a android.intent.action.MAIN \
+    adbc shell am start -a android.intent.action.MAIN \
       -c android.intent.category.LEANBACK_LAUNCHER -n "$APPID/$TV_ACT" >/dev/null 2>&1 \
       || warn "could not open its TV activity — open it by hand"
-  elif "${ADB[@]}" shell monkey -p "$APPID" -c android.intent.category.LAUNCHER 1 2>&1 | grep -q 'No activities found'; then
+  elif adbc shell monkey -p "$APPID" -c android.intent.category.LAUNCHER 1 2>&1 | grep -q 'No activities found'; then
     warn "the app has no launcher icon to open — open it by hand"
   fi
   act "watching the first $WATCH seconds — don't touch the device yet"
@@ -1201,7 +1203,7 @@ if [ "$NO_DEVICE" = 0 ]; then
         | sed -E 's/^text="([^"]*)".*/\1/' | head -1)"
       ash rm -f /sdcard/fdroid-tester.xml || true
       START_PROMPT="${START_PROMPT:-a permission prompt}"
-      if "${ADB[@]}" exec-out screencap -p > "$OUT/permission-on-start.png" 2>/dev/null \
+      if adbc exec-out screencap -p > "$OUT/permission-on-start.png" 2>/dev/null \
          && [ -s "$OUT/permission-on-start.png" ]; then
         add_shot permission-on-start.png "permission prompt on start"
       fi
@@ -1209,12 +1211,12 @@ if [ "$NO_DEVICE" = 0 ]; then
   done
   T_END="$(ash date +%s)"
   SHOT="$OUT/after-${WATCH}s.png"
-  if "${ADB[@]}" exec-out screencap -p > "$SHOT" 2>/dev/null && [ -s "$SHOT" ]; then add_shot "${SHOT##*/}" "after $WATCH seconds"
+  if adbc exec-out screencap -p > "$SHOT" 2>/dev/null && [ -s "$SHOT" ]; then add_shot "${SHOT##*/}" "after $WATCH seconds"
   else SHOT=""; fi
 
-  if [ -z "$(ash pidof "$APPID")" ] || "${ADB[@]}" logcat -d -b crash 2>/dev/null | grep -q "Process: $APPID"; then
+  if [ -z "$(ash pidof "$APPID")" ] || adbc logcat -d -b crash 2>/dev/null | grep -q "Process: $APPID"; then
     CRASHED=y
-    "${ADB[@]}" logcat -d -b crash > "$OUT/crash.log" 2>/dev/null || true
+    adbc logcat -d -b crash > "$OUT/crash.log" 2>/dev/null || true
     warn "the app is not running after $WATCH seconds — it probably crashed (crash.log saved)"
   else
     ok "still running after $WATCH seconds"
@@ -1252,7 +1254,7 @@ EOF
 
   if [ "$CAPTURED" = y ]; then
     capture_stop || warn "PCAPdroid is still recording — stop it in the app; the file may be cut short"
-    if "${ADB[@]}" pull "/sdcard/Download/PCAPdroid/$PCAP_NAME" "$OUT/traffic.pcap" >/dev/null 2>&1; then
+    if adbc pull "/sdcard/Download/PCAPdroid/$PCAP_NAME" "$OUT/traffic.pcap" >/dev/null 2>&1; then
       ash rm -f "/sdcard/Download/PCAPdroid/$PCAP_NAME" || true
       while IFS=$'\t' read -r kind a b c; do
         case "$kind" in
@@ -1539,7 +1541,7 @@ else
 fi
 
 if [ "$NO_DEVICE" = 0 ] && [ "$KEEP" = 0 ]; then
-  confirm "Remove the app from the device now?" y && "${ADB[@]}" uninstall "$APPID" >/dev/null && ok "removed"
+  confirm "Remove the app from the device now?" y && adbc uninstall "$APPID" >/dev/null && ok "removed"
 fi
 
 exit 0
