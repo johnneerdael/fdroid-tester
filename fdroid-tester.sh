@@ -41,7 +41,7 @@ PCAP_PKG="com.emanuelef.remote_capture"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/fdroid-tester"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/fdroid-tester"
 
-SERIAL=""; WATCH=15; NO_DEVICE=0; KEEP=0; MR_ARG=""; CHECK_ONLY=0
+SERIAL=""; WATCH=15; NO_DEVICE=0; KEEP=0; MR_ARG=""; CHECK_ONLY=0; FORCE_VPN=0
 
 usage() {
   cat <<EOF
@@ -55,6 +55,8 @@ options:
   -w SECONDS     how long to watch the app after it opens (default $WATCH)
   --no-device    only download and look inside the APK, no device needed
   --keep         leave the app installed at the end without asking
+  --vpn          record with PCAPdroid's VPN even when the device has root
+                 (with root, it records in root mode: no VPN prompt)
   --check        only check the tools, the device, PCAPdroid and the glab
                  login, then stop
   --version      print the version
@@ -79,6 +81,7 @@ while [ $# -gt 0 ]; do
         case "$WATCH" in ''|*[!0-9]*) printf -- '-w wants a number of seconds\n' >&2; exit 2 ;; esac ;;
     --no-device) NO_DEVICE=1 ;;
     --keep) KEEP=1 ;;
+    --vpn) FORCE_VPN=1 ;;
     --check) CHECK_ONLY=1 ;;
     --version) printf 'fdroid-tester %s\n' "$VERSION"; exit 0 ;;
     -h|--help) usage; exit 0 ;;
@@ -212,7 +215,7 @@ capture_stop() {  # ask PCAPdroid to stop, and wait until it has closed the file
   return 1
 }
 KEY=()
-DEV_ABIS=""; DEV_SDK=""; DEV_DESC=""; PCAP_OK=0; PCAP_NEED=0; CAN_POST=0; EDIT_CMD=""; NO_PHONE_FOUND=0
+DEV_ABIS=""; DEV_SDK=""; DEV_DESC=""; PCAP_OK=0; PCAP_NEED=0; CAN_POST=0; EDIT_CMD=""; NO_PHONE_FOUND=0; ROOT=0
 
 step "0. Checks"
 
@@ -289,6 +292,15 @@ else
         PCAP_OK=1
         if [ -s "$CONF/pcapdroid-api-key" ]; then row ok PCAPdroid "$PCAP_VER, API key set"
         else row ok PCAPdroid "$PCAP_VER — it asks on the device; an API key skips that (--help)"; fi
+      fi
+      # With root, PCAPdroid records without its VPN: nothing to confirm on
+      # the device but its root access, once.
+      if [ "$FORCE_VPN" = 1 ]; then
+        row info root "not used (--vpn)"
+      elif ash su -c id | grep -q '^uid=0'; then
+        ROOT=1; row ok root "yes — PCAPdroid records in root mode, no VPN prompt"
+      else
+        row info root "no — PCAPdroid records through its VPN"
       fi ;;
     unauthorized) row fail device "${SERIAL:-the device} has not allowed this computer — accept the USB debugging prompt on it" ;;
     offline)      row fail device "${SERIAL:-the device} is offline — unplug it and plug it back in" ;;
@@ -1082,12 +1094,18 @@ if [ "$NO_DEVICE" = 0 ]; then
         warn "PCAPdroid is already recording — stopping it, so this run gets its own capture"
         capture_stop
       fi
+      # The VPN-only settings do not apply in root mode.
+      MODE=(-e block_quic always -e auto_block_private_dns true); FIRST="the VPN prompt"
+      if [ "$ROOT" = 1 ]; then MODE=(-e root_capture true); FIRST="its root access prompt"; fi
       ash am start -n "$PCAP_PKG/.activities.CaptureCtrl" -e action start \
         -e pcap_dump_mode pcap_file -e pcap_name "$PCAP_NAME" -e app_filter "$APPID" \
-        -e block_quic always -e auto_block_private_dns true "${KEY[@]}" >/dev/null
+        "${MODE[@]}" "${KEY[@]}" >/dev/null
       if [ "${#KEY[@]}" -eq 0 ]; then
-        act "on the device: allow PCAPdroid's control prompt (and the VPN prompt, the first time)"
+        act "on the device: allow PCAPdroid's control prompt (and $FIRST, the first time)"
         note "tip: an API key in $CONF/pcapdroid-api-key skips the first prompt (see --help)"
+      fi
+      if [ "${#KEY[@]}" -gt 0 ] && [ "$ROOT" = 1 ]; then
+        act "on the device: allow PCAPdroid's root access prompt, the first time"
       fi
       say "waiting for PCAPdroid to start recording…"
       for _ in $(seq 1 90); do capture_running && break; sleep 1; done
@@ -1307,6 +1325,7 @@ box() {  # box <condition y|n|s> <text> — ticked when the condition is y
 }
 neg() { case "$1" in y) echo n ;; n) echo y ;; *) echo s ;; esac; }
 
+CAP_MODE=VPN; [ "$ROOT" = 1 ] && CAP_MODE=root
 REPORT="$OUT/report.md"
 {
   printf 'Tested `%s` %s (%s)' "$APPID" "$VNAME" "$VCODE"
@@ -1367,10 +1386,13 @@ REPORT="$OUT/report.md"
   [ "${#S_TRACKERS[@]}" -gt 0 ] && { printf -- '- Tracker code (Exodus signatures):\n'; printf '  - %s\n' "${S_TRACKERS[@]}"; }
   [ "${#S_NONFREE[@]}" -gt 0 ] && printf -- '- Non-free libraries: %s\n' "${S_NONFREE[*]}"
   if [ "$CAPTURED" = y ] && [ -z "$PCAP_ERR" ]; then
-    printf -- '- Connections (PCAPdroid), first %ss after launch:' "$WATCH"
+    printf -- '- Connections (PCAPdroid, %s mode), first %ss after launch:' "$CAP_MODE" "$WATCH"
     if [ "${#CONN_START[@]}" -gt 0 ]; then printf '\n'; printf '  - `%s`\n' "${CONN_START[@]}"; else printf ' none\n'; fi
     printf -- '- Connections while in use:'
     if [ "${#CONN_LATER[@]}" -gt 0 ]; then printf '\n'; printf '  - `%s`\n' "${CONN_LATER[@]}"; else printf ' none\n'; fi
+    if [ "$ROOT" = 1 ]; then
+      printf -- '- In root mode the app'\''s DNS lookups are made by the system, so connections are named from TLS and HTTP only; the others show as address:port.\n'
+    fi
   elif [ "$HAS_INTERNET" = 1 ]; then
     printf -- '- Network not captured.\n'
   fi
