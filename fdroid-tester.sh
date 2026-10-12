@@ -178,7 +178,9 @@ FAILS=0
 row() {  # row ok|warn|fail|info "what" "detail"
   local mark
   case "$1" in
-    ok) mark="$GRN✓$R" ;; warn) mark="$YLW!$R" ;; fail) mark="$RED✗$R" ;; *) mark="$DIM·$R" ;;
+    # braces: in a UTF-8 locale, macOS's bash would read the mark's first
+    # byte as part of the variable's name
+    ok) mark="${GRN}✓${R}" ;; warn) mark="${YLW}!${R}" ;; fail) mark="${RED}✗${R}" ;; *) mark="${DIM}·${R}" ;;
   esac
   printf '   %s %-11s %s\n' "$mark" "$2" "$3"
   [ "$1" = fail ] && FAILS=$((FAILS + 1))
