@@ -221,7 +221,7 @@ ash() { adbc shell "$@" 2>/dev/null | tr -d '\r'; }
 capture_running() { ash dumpsys activity services "$PCAP_PKG" | grep -q 'CaptureService'; }
 capture_stop() {  # ask PCAPdroid to stop, and wait until it has closed the file
   ash am start -n "$PCAP_PKG/.activities.CaptureCtrl" -e action stop "${KEY[@]}" >/dev/null || true
-  for _ in $(seq 1 15); do capture_running || return 0; sleep 1; done
+  for _ in $(seq 1 30); do capture_running || return 0; sleep 1; done
   return 1
 }
 KEY=()
@@ -1159,7 +1159,9 @@ if [ "$NO_DEVICE" = 0 ]; then
       ash rm -f "/sdcard/Download/PCAPdroid/$PCAP_NAME" || true
       if capture_running; then
         warn "PCAPdroid is already recording — stopping it, so this run gets its own capture"
-        capture_stop
+        # without an API key PCAPdroid asks on the device before it stops, too
+        [ "${#KEY[@]}" -eq 0 ] && act "on the device: allow PCAPdroid's prompt to stop its earlier capture"
+        capture_stop || die "PCAPdroid is still recording an earlier capture — stop it in PCAPdroid, then run again"
       fi
       # The VPN-only settings do not apply in root mode.
       MODE=(-e block_quic always -e auto_block_private_dns true); FIRST="the VPN prompt"
@@ -1259,6 +1261,7 @@ EOF
   check_alive
 
   if [ "$CAPTURED" = y ]; then
+    [ "${#KEY[@]}" -eq 0 ] && act "on the device: allow PCAPdroid's prompt to stop the capture"
     capture_stop || warn "PCAPdroid is still recording — stop it in the app; the file may be cut short"
     if adbc pull "/sdcard/Download/PCAPdroid/$PCAP_NAME" "$OUT/traffic.pcap" >/dev/null 2>&1; then
       ash rm -f "/sdcard/Download/PCAPdroid/$PCAP_NAME" || true
