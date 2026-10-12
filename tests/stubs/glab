@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # Fake glab for the tests: a logged-in user, uploads and notes kept in $FAKE.
+# Uploads must be multipart (--form), as on gitlab.com; FAKE_GLAB_OLD plays a
+# glab from before --form.
 set -u
 printf '%s\n' "$*" >> "$FAKE/glab.log"
 case "$*" in
   "auth status"*) [ -z "${FAKE_GLAB_OFF:-}" ] ;;
   "api user") echo '{"username": "tester"}' ;;
-  "api --method POST projects/"*"/uploads -F file=@"*)
+  "api --help")
+    echo "  -F, --field stringArray   Add a typed parameter in key=value format"
+    [ -n "${FAKE_GLAB_OLD:-}" ] || echo "      --form stringArray    Add a multipart form field in key=value format" ;;
+  "api --method POST projects/"*"/uploads --form file=@"*)
+    [ -z "${FAKE_GLAB_OLD:-}" ] || { echo "unknown flag: --form" >&2; exit 1; }
     project="${4#projects/}"; project="${project%/uploads}"; name="$(basename "${6#file=@}")"
     case " ${FAKE_UPLOAD_FAIL:-} " in *" $project "*) echo '{"message": "403 Forbidden"}'; exit 1 ;; esac
     if [ "$project" = "fdroid%2Ffdroiddata" ]; then

@@ -8,6 +8,7 @@ test_rooted_device_records_in_root_mode() {
   run_tester "" -w 1 --keep 123
   assert_rc 0
   assert_out "root +yes — PCAPdroid records in root mode, no VPN prompt"
+  refute_has "$FAKE/calls.log" "su -c"
   assert_has "$FAKE/calls.log" "-e root_capture true"
   refute_has "$FAKE/calls.log" "block_quic"
   assert_has "$(review_dir)/report.md" "Connections (PCAPdroid, root mode)"
@@ -42,4 +43,5 @@ test_help_lists_the_vpn_option() {
   run_tester "" --help
   assert_rc 0
   assert_out "--vpn"
+  assert_out "without --vpn, a rooted device records in root mode"
 }

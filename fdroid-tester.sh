@@ -58,7 +58,8 @@ options:
   --no-device    only download and look inside the APK, no device needed
   --keep         leave the app installed at the end without asking
   --vpn          record with PCAPdroid's VPN even when the device has root
-                 (with root, it records in root mode: no VPN prompt)
+                 (without --vpn, a rooted device records in root mode: no VPN
+                 prompt)
   --apk FILE     test this APK instead of downloading the merge request's;
                  without a merge request, nothing is read from or posted to
                  gitlab.com
@@ -301,10 +302,11 @@ else
         else row ok PCAPdroid "$PCAP_VER — it asks on the device; an API key skips that (--help)"; fi
       fi
       # With root, PCAPdroid records without its VPN: nothing to confirm on
-      # the device but its root access, once.
+      # the device but its root access, once. Only whether su is there is
+      # checked; running it here would ask to give the adb shell root too.
       if [ "$FORCE_VPN" = 1 ]; then
         row info root "not used (--vpn)"
-      elif ash su -c id | grep -q '^uid=0'; then
+      elif [ -n "$(ash command -v su)" ]; then
         ROOT=1; row ok root "yes — PCAPdroid records in root mode, no VPN prompt"
       else
         row info root "no — PCAPdroid records through its VPN"
@@ -722,26 +724,36 @@ def png_size(path):
 
 def cmd_embed(report, uploads, folder):
     up = {}
-    for line in open(uploads, encoding="utf-8"):
+    for line in open(uploads, encoding="utf-8", errors="replace"):
         f, _, path = line.rstrip("\n").partition("\t")
         if f and path:
             up[f] = path
-    for line in open(report, encoding="utf-8"):
-        m = re.match(r"- `([^`]+\.png)`(?: — (.*))?$", line.rstrip("\n"))
+    # a byte that is not UTF-8 (notes typed in another encoding) must not stop the post
+    out = open(sys.stdout.fileno(), "w", encoding="utf-8", errors="replace", closefd=False)
+    section = False                        # only the screenshot list is rewritten
+    for line in open(report, encoding="utf-8", errors="replace"):
+        if line.startswith("**Screenshots:**"):
+            section = True
+        elif line.startswith("<details>"):
+            section = False
+        m = section and re.match(r"- `([^`]+\.png)`(?: — (.*))?$", line.rstrip("\n"))
         if not m:
-            print(line, end="")
+            out.write(line)
             continue
         f, cap = m.group(1), m.group(2) or ""
         text = cap or f
+        shown = text.replace("\\", "\\\\").replace("`", "\\`")
         if f not in up:
-            print(f"- {text} _(screenshot could not be uploaded)_")
+            out.write(f"- {shown} _(screenshot could not be uploaded)_\n")
             continue
         url = up[f]
         if url.startswith("/-/"):          # uploaded to another project: a full address
             url = "https://gitlab.com" + url
         w, h = png_size(f"{folder}/{f}")
-        alt = text.replace("[", "(").replace("]", ")")
-        print(f"- {text}<br>![{alt}]({url}){{width={240 if h > w else 480}}}")
+        # brackets, backticks and backslashes would end or swallow the image
+        alt = text.translate(str.maketrans("[]`\\", "()'/"))
+        out.write(f"- {shown}<br>![{alt}]({url}){{width={240 if h > w else 480}}}\n")
+    out.flush()
 
 {"mr": cmd_mr, "cq": cmd_cq, "static": cmd_static, "pcap": cmd_pcap,
  "vt": cmd_vt, "jget": cmd_jget, "cats": cmd_cats, "embed": cmd_embed}[sys.argv[1]](*sys.argv[2:])
@@ -1057,13 +1069,20 @@ add_shot() {  # add_shot <file in the review folder> <caption>
   SHOTS+=("$1"$'\t'"$2")
   printf '%s\t%s\n' "$1" "$2" >> "$OUT/shots.tsv"
 }
-# check_alive — a crash while the app is in use is said at once, not only at the end
+# check_alive — a crash while the app is in use is said at once, not only at
+# the end. A process that is gone without a crash log is said too: the tester
+# may have closed it, so they judge it, with "no" as the answer offered.
+GONE=n
 check_alive() {
   [ "$CRASHED" = n ] || return 0
-  "${ADB[@]}" logcat -d -b crash 2>/dev/null | grep -q "Process: $APPID" || return 0
-  "${ADB[@]}" logcat -d -b crash > "$OUT/crash.log" 2>/dev/null || true
-  warn "it crashed while you used it (crash.log saved)"
-  CRASHED=later
+  if "${ADB[@]}" logcat -d -b crash 2>/dev/null | grep -q "Process: $APPID"; then
+    "${ADB[@]}" logcat -d -b crash > "$OUT/crash.log" 2>/dev/null || true
+    warn "it crashed while you used it (crash.log saved)"
+    CRASHED=later
+  elif [ "$GONE" = n ] && [ -z "$(ash pidof "$APPID")" ]; then
+    GONE=y
+    warn "the app is not running any more — unless you closed it, it stopped unexpectedly"
+  fi
 }
 take_shot() {  # take_shot — a screenshot now, with a caption typed by the tester
   local n=1 f cap
@@ -1136,6 +1155,7 @@ if [ "$NO_DEVICE" = 0 ]; then
         CAPTURED=y; ok "PCAPdroid is recording"
       else
         warn "PCAPdroid did not start within 90 seconds"
+        [ "$ROOT" = 1 ] && note "in root mode it needs root access: if that was refused, run again with --vpn"
         confirm "Carry on without the network check?" y || die "start PCAPdroid once by hand, then run again"
       fi
     else
@@ -1208,11 +1228,7 @@ EOF
     esac
   done
 
-  if [ "$CRASHED" = n ] && "${ADB[@]}" logcat -d -b crash 2>/dev/null | grep -q "Process: $APPID"; then
-    "${ADB[@]}" logcat -d -b crash > "$OUT/crash.log" 2>/dev/null || true
-    warn "it crashed while you used it (crash.log saved)"
-    CRASHED=later
-  fi
+  check_alive
 
   if [ "$CAPTURED" = y ]; then
     capture_stop || warn "PCAPdroid is still recording — stop it in the app; the file may be cut short"
@@ -1265,7 +1281,7 @@ VT_OK=s; [ -n "$VT_RESULT" ] && [ "$VT_MAL" = 0 ] && VT_OK=y
 [ "$NO_DEVICE" = 1 ] && act "no device in this run — answer from what you saw on a device, or s to skip"
 
 say "${B}Basic function${R}"
-def=y; [ "$CRASHED" = n ] || def=n
+def=y; [ "$CRASHED" = n ] || def=n; [ "$GONE" = n ] || def=n
 yns Q_WORKS    "Did it start and work normally?" "$def"
 yns Q_FEATURES "Do the main features from its description work?" y
 yns Q_ICON     "Does it have its own icon (not the stock Android/Flutter one)?" y
@@ -1386,7 +1402,8 @@ REPORT="$OUT/report.md"
   if [ -n "$TESTER_NOTES" ]; then
     # two trailing spaces keep each line on its own line in Markdown
     printf '**Notes from the tester:**\n\n'
-    printf '%s' "$TESTER_NOTES" | sed 's/$/  /'
+    # bytes as they are: macOS's sed refuses a line that is not valid UTF-8
+    printf '%s' "$TESTER_NOTES" | LC_ALL=C sed 's/$/  /'
     printf '\n'
   fi
   if [ "${#SHOTS[@]}" -gt 0 ]; then
@@ -1402,6 +1419,7 @@ REPORT="$OUT/report.md"
   printf -- '- APK: `%s` (sha256 `%s`)\n' "${APK##*/}" "$SHA256"
   [ "$CRASHED" != n ] && printf -- '- Crashed (%s). Log:\n```\n%s\n```\n' \
     "$([ "$CRASHED" = y ] && echo "on start" || echo "while in use")" "$(head -40 "$OUT/crash.log" 2>/dev/null)"
+  [ "$GONE" = y ] && printf -- '- The app was not running any more when the test ended, and left no crash log (closed, or stopped).\n'
   [ -n "$START_PROMPT" ] && printf -- '- Asks for a permission on start: "%s"\n' "$START_PROMPT"
   [ "${#P_SPECIAL[@]}" -gt 0 ] && printf -- '- Special permissions: %s\n' "${P_SPECIAL[*]}"
   [ "${#P_RUNTIME[@]}" -gt 0 ] && printf -- '- Runtime permissions: %s\n' "${P_RUNTIME[*]}"
@@ -1434,55 +1452,60 @@ ok "saved to ${REPORT#"$PWD"/}"
 # The report goes to the same merge request, as a comment from your GitLab
 # account. Nothing is posted without a yes, and the boxes still unchecked can
 # be fixed in an editor first.
+if [ -n "$IID" ]; then step "7. Post to !$IID"; else step "7. The report"; fi
+LEFT="$(grep -c '(not checked)' "$REPORT" || true)"
+[ "$LEFT" -gt 0 ] && warn "$LEFT box(es) still say (not checked)"
+if [ -n "$EDIT_CMD" ] && confirm "Edit the report$([ -n "$IID" ] && echo " before posting")?" "$([ "$LEFT" -gt 0 ] && echo y || echo n)"; then
+  $EDIT_CMD "$REPORT" || warn "the editor exited with an error"
+fi
+# upload_shot <png> — uploads it for the comment and prints its path on
+# gitlab.com: to fdroiddata first, so the image lasts as long as the merge
+# request, else to the merge request's own fork. Uploads must be multipart
+# (--form); -F would send the image as a JSON string.
+upload_shot() {
+  local p v
+  for p in "${MR_REPO//\//%2F}" "$MR_SRC"; do
+    [ -n "$p" ] || continue
+    glab api --method POST "projects/$p/uploads" --form "file=@$1" > "$WORK/up.json" 2>/dev/null || continue
+    v="$(tool jget "$WORK/up.json" full_path)"
+    # a path relative to the project only works where the comment is posted
+    if [ -z "$v" ] && [ "$p" = "${MR_REPO//\//%2F}" ]; then v="$(tool jget "$WORK/up.json" url)"; fi
+    if [ -n "$v" ]; then printf '%s' "$v"; return 0; fi
+  done
+  return 1
+}
 if [ -z "$IID" ]; then
   note "no merge request — the report stays in ${REPORT#"$PWD"/}"
-else
-  step "7. Post to !$IID"
-  LEFT="$(grep -c '(not checked)' "$REPORT" || true)"
-  [ "$LEFT" -gt 0 ] && warn "$LEFT box(es) still say (not checked)"
-  if [ -n "$EDIT_CMD" ] && confirm "Edit the report before posting?" "$([ "$LEFT" -gt 0 ] && echo y || echo n)"; then
-    $EDIT_CMD "$REPORT" || warn "the editor exited with an error"
-  fi
-  # upload_shot <png> — uploads it for the comment and prints its path on
-  # gitlab.com: the merge request's own fork first, then fdroiddata.
-  upload_shot() {
-    local p v
-    for p in "$MR_SRC" "${MR_REPO//\//%2F}"; do
-      [ -n "$p" ] || continue
-      glab api --method POST "projects/$p/uploads" -F "file=@$1" > "$WORK/up.json" 2>/dev/null || continue
-      v="$(tool jget "$WORK/up.json" full_path)"
-      if [ -z "$v" ] && [ "$p" = "${MR_REPO//\//%2F}" ]; then v="$(tool jget "$WORK/up.json" url)"; fi
-      if [ -n "$v" ]; then printf '%s' "$v"; return 0; fi
-    done
-    return 1
-  }
-  if [ "$CAN_POST" = 0 ]; then
-    note "glab is not ready (see the checks at the top) — paste ${REPORT#"$PWD"/} into $MR_URL yourself"
-  elif confirm "Post the report as a comment on $MR_URL?" y; then
-    BODY="$REPORT"
-    if [ "${#SHOTS[@]}" -gt 0 ]; then
+elif [ "$CAN_POST" = 0 ]; then
+  note "glab is not ready (see the checks at the top) — paste ${REPORT#"$PWD"/} into $MR_URL yourself"
+elif confirm "Post the report as a comment on $MR_URL?" y; then
+  BODY="$REPORT"
+  if [ "${#SHOTS[@]}" -gt 0 ]; then
+    : > "$WORK/uploads.tsv"
+    if ! glab api --help 2>&1 | grep -q -- '--form'; then
+      warn "glab is too old to upload screenshots (it needs --form) — the comment lists them by name"
+    else
       say "uploading the screenshots…"
-      : > "$WORK/uploads.tsv"
       for s in "${SHOTS[@]}"; do
         f="${s%%$'\t'*}"
         if up="$(upload_shot "$OUT/$f")"; then printf '%s\t%s\n' "$f" "$up" >> "$WORK/uploads.tsv"
         else warn "could not upload $f — the comment says so in its place"; fi
       done
-      tool embed "$REPORT" "$WORK/uploads.tsv" "$OUT" > "$WORK/post.md"
-      BODY="$WORK/post.md"
     fi
-    if glab api --method POST "projects/${MR_REPO//\//%2F}/merge_requests/$IID/notes" \
-         -F "body=@$BODY" > "$WORK/note.json" 2>&1; then
-      NOTE_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id", ""))' \
-                 "$WORK/note.json" 2>/dev/null || true)"
-      ok "posted: $MR_URL${NOTE_ID:+#note_$NOTE_ID}"
-    else
-      warn "glab could not post it:"; sed 's/^/     /' "$WORK/note.json" | head -5
-      note "paste ${REPORT#"$PWD"/} into $MR_URL yourself"
-    fi
-  else
-    note "not posted — it stays in ${REPORT#"$PWD"/}"
+    tool embed "$REPORT" "$WORK/uploads.tsv" "$OUT" > "$WORK/post.md"
+    BODY="$WORK/post.md"
   fi
+  if glab api --method POST "projects/${MR_REPO//\//%2F}/merge_requests/$IID/notes" \
+       -F "body=@$BODY" > "$WORK/note.json" 2>&1; then
+    NOTE_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id", ""))' \
+               "$WORK/note.json" 2>/dev/null || true)"
+    ok "posted: $MR_URL${NOTE_ID:+#note_$NOTE_ID}"
+  else
+    warn "glab could not post it:"; sed 's/^/     /' "$WORK/note.json" | head -5
+    note "paste ${REPORT#"$PWD"/} into $MR_URL yourself"
+  fi
+else
+  note "not posted — it stays in ${REPORT#"$PWD"/}"
 fi
 
 if [ "$NO_DEVICE" = 0 ] && [ "$KEEP" = 0 ]; then

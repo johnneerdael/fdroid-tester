@@ -32,4 +32,6 @@ for t in $(declare -F | awk '{print $3}' | grep '^test_' | grep -e "$FILTER"); d
   fi
 done
 printf '\n%s passed, %s failed\n' "$passed" "${#failed[@]}"
+# a filter that matches nothing must not look like a passing run
+if [ $((passed + ${#failed[@]})) = 0 ]; then echo "no test matches '$FILTER'" >&2; exit 1; fi
 [ "${#failed[@]}" = 0 ]
