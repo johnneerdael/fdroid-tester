@@ -697,7 +697,7 @@ def png_size(path):
             head = f.read(24)
     except OSError:
         return 0, 0
-    if head[:8] != b"\x89PNG\r\n\x1a\n":
+    if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n":   # cut short: no size
         return 0, 0
     return struct.unpack(">II", head[16:24])
 

@@ -122,3 +122,11 @@ test_app_that_stops_without_a_crash_is_noticed() {
   assert_has "$(review_dir)/report.md" '- [ ] The app can start and work normally.'
   assert_has "$(review_dir)/report.md" 'The app was not running any more when the test ended'
 }
+
+test_short_png_does_not_stop_the_post() {
+  use_mr phone.apk org.example.phone
+  head -c 20 "$FAKE/screen.png" > "$FAKE/short.png" && mv "$FAKE/short.png" "$FAKE/screen.png"
+  run_tester 's\n\n\n' -w 1 --keep 123
+  assert_rc 0
+  assert_has "$FAKE/note.md" 'shot-01.png){width=480}'
+}
