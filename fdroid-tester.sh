@@ -1056,7 +1056,9 @@ check_alive() {
     "${ADB[@]}" logcat -d -b crash > "$OUT/crash.log" 2>/dev/null || true
     warn "it crashed while you used it (crash.log saved)"
     CRASHED=later
-  elif [ "$GONE" = n ] && [ -z "$(ash pidof "$APPID")" ]; then
+  elif [ -n "$(ash pidof "$APPID")" ]; then
+    GONE=n                              # running (again): only the last check counts
+  elif [ "$GONE" = n ]; then
     GONE=y
     warn "the app is not running any more — unless you closed it, it stopped unexpectedly"
   fi
@@ -1161,14 +1163,15 @@ if [ "$NO_DEVICE" = 0 ]; then
         | sed -E 's/^text="([^"]*)".*/\1/' | head -1)"
       ash rm -f /sdcard/fdroid-tester.xml || true
       START_PROMPT="${START_PROMPT:-a permission prompt}"
-      if "${ADB[@]}" exec-out screencap -p > "$OUT/permission-on-start.png" 2>/dev/null; then
+      if "${ADB[@]}" exec-out screencap -p > "$OUT/permission-on-start.png" 2>/dev/null \
+         && [ -s "$OUT/permission-on-start.png" ]; then
         add_shot permission-on-start.png "permission prompt on start"
       fi
     fi
   done
   T_END="$(ash date +%s)"
   SHOT="$OUT/after-${WATCH}s.png"
-  if "${ADB[@]}" exec-out screencap -p > "$SHOT" 2>/dev/null; then add_shot "${SHOT##*/}" "after $WATCH seconds"
+  if "${ADB[@]}" exec-out screencap -p > "$SHOT" 2>/dev/null && [ -s "$SHOT" ]; then add_shot "${SHOT##*/}" "after $WATCH seconds"
   else SHOT=""; fi
 
   if [ -z "$(ash pidof "$APPID")" ] || "${ADB[@]}" logcat -d -b crash 2>/dev/null | grep -q "Process: $APPID"; then
