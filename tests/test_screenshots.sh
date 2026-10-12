@@ -130,3 +130,21 @@ test_short_png_does_not_stop_the_post() {
   assert_rc 0
   assert_has "$FAKE/note.md" 'shot-01.png){width=480}'
 }
+
+test_app_relaunched_after_it_was_gone_is_not_reported_as_stopped() {
+  use_mr phone.apk org.example.phone
+  export FAKE_GLAB_OFF=1 FAKE_GONE_AFTER=2 FAKE_GONE_UNTIL=3
+  run_tester 's\n\ns\n\n\n' -w 1 --keep 123
+  assert_rc 0
+  assert_out "not running any more"
+  assert_has "$(review_dir)/report.md" '- [x] The app can start and work normally.'
+  refute_has "$(review_dir)/report.md" 'The app was not running any more when the test ended'
+}
+
+test_empty_automatic_screenshots_are_left_out() {
+  use_mr phone.apk org.example.phone
+  export FAKE_GLAB_OFF=1 FAKE_EMPTY_SCREEN=1
+  run_tester '' -w 1 --keep 123
+  assert_rc 0
+  refute_has "$(review_dir)/report.md" 'after-1s.png'
+}
