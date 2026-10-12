@@ -26,9 +26,12 @@ reports for other apps in the `review-requested` queue.
   terminal run, with a screenshot key, is the UI.
 - Keep upstream's style: one bash script, the embedded Python helper, plain
   English messages, no new dependencies, commit subjects `#0 <sentence>`.
-- Fork `johnneerdael/fdroid-tester`. Each feature is a branch from
-  `upstream/main` and becomes its own upstream PR, opened only after the owner
-  has seen it. The fork's `main` merges all features and is what we run.
+- Fork `johnneerdael/fdroid-tester`. Each feature is developed on a branch of
+  the fork (so the fork-only test harness is available), with the script change
+  and its tests in separate commits, and merged into the fork's `main`, which
+  is what we run. Each feature becomes its own upstream PR by cherry-picking
+  only its script commit onto `upstream/main`, stacked in feature order and
+  opened only after the owner has seen it.
 - This spec and the implementation plan live only on the fork's `main`
   (`docs/superpowers/`), never in an upstream PR branch.
 - Network capture on rooted devices uses PCAPdroid's root mode
@@ -117,6 +120,10 @@ Risk to verify: which project the uploads API accepts for a non-member
 
 ## Validation
 
+- A fork-only test harness (`tests/`, never sent upstream) runs the real
+  script against fixture APKs built with `aapt2` and fake `adb`, `curl`,
+  `glab` and `open` commands that log their calls, so every feature is tested
+  before it is implemented, without a device or network.
 - Every change: `bash -n fdroid-tester.sh`; `shellcheck` when installed,
   without introducing new warnings relative to upstream; `--check` and
   `--help` runs.
@@ -134,10 +141,14 @@ Risk to verify: which project the uploads API accepts for a non-member
 
 ## Delivery
 
-1. Spec (this file) merged to the fork's `main` after review.
-2. Implementation plan on the fork's `main`.
-3. For each feature: branch from `upstream/main`, implement, validate, PR into
+1. Spec (this file) and the implementation plan merged to the fork's `main`
+   after review.
+2. Test harness merged to the fork's `main`.
+3. For each feature, in the order TV apps, screenshots, root capture, local
+   APK: branch from the fork's `main`, tests first, implement, validate, PR into
    the fork's `main` with a Codex review where the integration is enabled
    (otherwise reported as a blocker, not skipped), merge.
-4. Upstream PRs prepared from the same feature branches and opened after the
-   owner has seen them.
+4. Device validation on the AM9 once it has authorised this computer.
+5. Upstream PR branches: each feature's script commit cherry-picked onto
+   `upstream/main` (stacked in the same order), opened after the owner has
+   seen them.
