@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Fake glab for the tests: a logged-in user, uploads and notes kept in $FAKE.
+set -u
+printf '%s\n' "$*" >> "$FAKE/glab.log"
+case "$*" in
+  "auth status"*) [ -z "${FAKE_GLAB_OFF:-}" ] ;;
+  "api user") echo '{"username": "tester"}' ;;
+  "api --method POST projects/"*"/uploads -F file=@"*)
+    project="${4#projects/}"; project="${project%/uploads}"; name="$(basename "${6#file=@}")"
+    case " ${FAKE_UPLOAD_FAIL:-} " in *" $project "*) echo '{"message": "403 Forbidden"}'; exit 1 ;; esac
+    if [ "$project" = "fdroid%2Ffdroiddata" ]; then
+      printf '{"url": "/uploads/def/%s"}\n' "$name"
+    else
+      printf '{"url": "/uploads/abc/%s", "full_path": "/-/project/%s/uploads/abc/%s"}\n' "$name" "$project" "$name"
+    fi ;;
+  "api --method POST projects/"*"/notes -F body=@"*) cp "${6#body=@}" "$FAKE/note.md"; echo '{"id": 77}' ;;
+  *) echo "fake glab: unknown call $*" >&2; exit 1 ;;
+esac
