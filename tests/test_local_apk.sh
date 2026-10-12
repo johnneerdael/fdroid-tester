@@ -19,6 +19,7 @@ test_local_apk_with_its_merge_request_skips_the_download() {
   assert_rc 0
   refute_has "$FAKE/curl.log" ".apk"
   refute_out "not one this merge request's CI built"
+  assert_has "$(review_dir)/report.md" "Tested a local APK, not one downloaded from this merge request's CI."
 }
 
 test_local_apk_the_merge_request_did_not_build_is_flagged() {
@@ -27,6 +28,7 @@ test_local_apk_the_merge_request_did_not_build_is_flagged() {
   run_tester "" -w 1 --keep --apk "$APKS/net.apk" 123
   assert_rc 0
   assert_out "org.example.net_7.apk is not one this merge request's CI built"
+  assert_has "$(review_dir)/report.md" 'It is not one of the APKs this merge request'"'"'s CI built (`org.example.net_7.apk`).'
 }
 
 test_missing_local_apk_is_refused() {
@@ -39,4 +41,18 @@ test_help_lists_the_apk_option() {
   run_tester "" --help
   assert_rc 0
   assert_out "--apk FILE"
+}
+
+test_local_apk_without_a_merge_request_needs_no_gitlab() {
+  export FAKE_GITLAB_DOWN=1
+  run_tester "" -w 1 --keep --apk "$APKS/phone.apk"
+  assert_rc 0
+  refute_has "$FAKE/glab.log" "api user"
+  refute_has "$FAKE/curl.log" "gitlab.com"
+}
+
+test_local_apk_without_a_merge_request_offers_the_editor() {
+  run_tester "" -w 1 --keep --apk "$APKS/phone.apk"
+  assert_rc 0
+  assert_out "Edit the report\\? "
 }
