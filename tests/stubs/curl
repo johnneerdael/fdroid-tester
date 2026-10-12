@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Fake curl for the tests: serves the fixtures in $FAKE by address.
+set -u
+printf '%s\n' "$*" >> "$FAKE/curl.log"
+out=""; fmt=""; url=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift ;;
+    -w) fmt="$2"; shift ;;
+    -m|-H|-F) shift ;;
+    http*) url="$1" ;;
+  esac
+  shift
+done
+serve() { if [ -n "$out" ]; then cp "$1" "$out"; else cat "$1"; fi; }
+code=200
+case "$url" in
+  *reports.exodus-privacy.eu.org*) printf '{"trackers": {}}' > "$FAKE/trackers.json"; serve "$FAKE/trackers.json" ;;
+  */projects/fdroid%2Ffdroiddata) : ;;
+  */projects/fdroid%2Ffdroiddata/merge_requests/*) serve "$FAKE/mr.json" ;;
+  *codequality_reports.json) serve "$FAKE/cq.json" ;;
+  *.apk) serve "$FAKE/app.apk" ;;
+  */repository/files/metadata%2F*) serve "$FAKE/meta.yml" ;;
+  *) code=404; [ -n "$fmt" ] || exit 22 ;;
+esac
+[ -n "$fmt" ] && printf '%s' "$code"
+exit 0
