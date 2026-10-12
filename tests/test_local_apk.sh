@@ -65,3 +65,12 @@ test_local_apk_for_a_merge_request_whose_ci_built_nothing_is_flagged() {
   assert_rc 0
   assert_has "$(review_dir)/report.md" 'It is not one of the APKs this merge request'"'"'s CI built (`org.example.phone_7.apk`).'
 }
+
+test_local_apk_is_not_uploaded_to_virustotal_by_default() {
+  mkdir -p "$T/home/config/fdroid-tester"
+  echo test-key > "$T/home/config/fdroid-tester/virustotal-api-key"
+  run_tester "" -w 1 --keep --apk "$APKS/phone.apk"
+  assert_rc 0
+  assert_out "local file.*\[y/N\]"
+  refute_has "$FAKE/curl.log" "file=@"
+}

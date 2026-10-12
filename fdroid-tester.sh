@@ -1041,7 +1041,13 @@ if [ -n "$VT_KEY" ]; then
   code="$(vt_get "files/$SHA256")"
   case "$code" in
     200) vt_read; [ "$VT_STATUS" = completed ] && vt_show ;;
-    404) if confirm "VirusTotal has not seen this APK — upload it for a scan?" y; then
+    # A CI build is a public download; a local file may not be meant to be
+    # shared, and VirusTotal shares uploads with its partners: ask, default no.
+    404) VT_Q="VirusTotal has not seen this APK — upload it for a scan?"; VT_DEF=y
+         if [ -n "$APK_ARG" ]; then
+           VT_Q="VirusTotal has not seen this local file — upload it? VirusTotal shares uploads with its partners"; VT_DEF=n
+         fi
+         if confirm "$VT_Q" "$VT_DEF"; then
            vt_scan </dev/null >/dev/null 2>&1 &
            VT_PID=$!
            ok "uploading and scanning in the background — carry on, the result comes in later"
