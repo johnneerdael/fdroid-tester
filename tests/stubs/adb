@@ -11,7 +11,9 @@ case "$cmd" in
   devices) printf 'List of devices attached\nFAKE01\tdevice\n'; exit 0 ;;
   install) touch "$FAKE/installed"; echo Success; exit 0 ;;
   uninstall) rm -f "$FAKE/installed"; echo Success; exit 0 ;;
-  exec-out) echo $(( $(caps) + 1 )) > "$FAKE/screencaps"; cat "$FAKE/screen.png"; exit 0 ;;
+  exec-out)   # FAKE_EMPTY_SCREEN: screencap succeeds without output
+    echo $(( $(caps) + 1 )) > "$FAKE/screencaps"
+    [ -n "${FAKE_EMPTY_SCREEN:-}" ] || cat "$FAKE/screen.png"; exit 0 ;;
   logcat)
     [ "${1-}" = -c ] && exit 0
     if [ -n "${FAKE_CRASH_AFTER:-}" ] && [ "$(caps)" -ge "$FAKE_CRASH_AFTER" ]; then
@@ -42,7 +44,9 @@ case "$line" in
     else echo "/system/bin/sh: su: inaccessible or not found"; exit 127; fi ;;
   "pidof "*)
     # FAKE_GONE_AFTER=<n>: the process is gone once n screenshots were taken
-    if [ -n "${FAKE_GONE_AFTER:-}" ] && [ "$(caps)" -ge "$FAKE_GONE_AFTER" ]; then :
+    # FAKE_GONE_UNTIL=<m>: and back again from screenshot m on (relaunched)
+    if [ -n "${FAKE_GONE_AFTER:-}" ] && [ "$(caps)" -ge "$FAKE_GONE_AFTER" ] \
+       && { [ -z "${FAKE_GONE_UNTIL:-}" ] || [ "$(caps)" -lt "$FAKE_GONE_UNTIL" ]; }; then :
     elif [ -e "$FAKE/installed" ]; then echo 4321; fi ;;
   "settings get global stay_on_while_plugged_in") echo 0 ;;
   "date +%s") date +%s ;;
