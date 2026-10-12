@@ -45,3 +45,13 @@ test_help_lists_the_vpn_option() {
   assert_out "--vpn"
   assert_out "without --vpn, a rooted device records in root mode"
 }
+
+test_capture_that_does_not_stop_is_said_and_stops_the_run() {
+  use_mr net.apk org.example.net
+  touch "$FAKE/capturing"
+  export FAKE_GLAB_OFF=1 FAKE_CAPTURE_STUCK=1
+  run_tester "" -w 1 --keep 123
+  assert_rc 1
+  assert_out "allow PCAPdroid's prompt to stop its earlier capture"
+  assert_out "PCAPdroid is still recording an earlier capture"
+}

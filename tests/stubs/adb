@@ -40,7 +40,9 @@ case "$line" in
   "dumpsys activity services com.emanuelef.remote_capture")
     [ -e "$FAKE/capturing" ] && echo "  * ServiceRecord{1 u0 com.emanuelef.remote_capture/.CaptureService}" ;;
   "am start -n com.emanuelef.remote_capture/.activities.CaptureCtrl -e action start"*) touch "$FAKE/capturing" ;;
-  "am start -n com.emanuelef.remote_capture/.activities.CaptureCtrl -e action stop"*) rm -f "$FAKE/capturing" ;;
+  "am start -n com.emanuelef.remote_capture/.activities.CaptureCtrl -e action stop"*)
+    # FAKE_CAPTURE_STUCK: the stop is never confirmed (prompt left unanswered)
+    [ -n "${FAKE_CAPTURE_STUCK:-}" ] || rm -f "$FAKE/capturing" ;;
   "pm path "*) [ -e "$FAKE/installed" ] && echo "package:/data/app/${line#pm path }/base.apk" ;;
   "pm list features") cat "$FAKE/features" ;;
   "command -v su") [ -e "$FAKE/root" ] && echo /system/bin/su ;;
