@@ -18,7 +18,9 @@
 #      in the code, WebView, languages, debuggable/cleartext flags
 #   4. installs it with adb, records its traffic with PCAPdroid if the device
 #      has it, opens the app and watches the first seconds: crash, permission
-#      prompt on start, connections on start
+#      prompt on start, connections on start; while you use it, s + Enter
+#      takes a screenshot, and they all go into the report (as images when
+#      it is posted)
 #   5. asks what only a person can tell, and writes the report in the wiki's
 #      template, ticked from what was found
 #   6. posts the report as a comment on the same merge request (glab, after a yes)
@@ -168,8 +170,6 @@ open_url() {  # open_url <url> — in the default browser; false when there is n
   if have wslview; then wslview "$1" >/dev/null 2>&1 & return 0; fi
   return 1
 }
-
-pause() { printf '   %s➜ %s%s ' "$BLU" "$1" "$R" >&2; local _; readline _; }
 
 # ================================================================ 0. checks
 # Everything a run leans on, checked before anything is downloaded. A missing
@@ -689,8 +689,43 @@ def cmd_cats(path):
             break
     print(", ".join(cats))
 
+# --- embed <report.md> <uploads.tsv> <folder>: the report as posted, its
+# screenshot lines turned into images (uploads.tsv: file<TAB>path on gitlab.com)
+def png_size(path):
+    try:
+        with open(path, "rb") as f:
+            head = f.read(24)
+    except OSError:
+        return 0, 0
+    if head[:8] != b"\x89PNG\r\n\x1a\n":
+        return 0, 0
+    return struct.unpack(">II", head[16:24])
+
+def cmd_embed(report, uploads, folder):
+    up = {}
+    for line in open(uploads, encoding="utf-8"):
+        f, _, path = line.rstrip("\n").partition("\t")
+        if f and path:
+            up[f] = path
+    for line in open(report, encoding="utf-8"):
+        m = re.match(r"- `([^`]+\.png)`(?: — (.*))?$", line.rstrip("\n"))
+        if not m:
+            print(line, end="")
+            continue
+        f, cap = m.group(1), m.group(2) or ""
+        text = cap or f
+        if f not in up:
+            print(f"- {text} _(screenshot could not be uploaded)_")
+            continue
+        url = up[f]
+        if url.startswith("/-/"):          # uploaded to another project: a full address
+            url = "https://gitlab.com" + url
+        w, h = png_size(f"{folder}/{f}")
+        alt = text.replace("[", "(").replace("]", ")")
+        print(f"- {text}<br>![{alt}]({url}){{width={240 if h > w else 480}}}")
+
 {"mr": cmd_mr, "cq": cmd_cq, "static": cmd_static, "pcap": cmd_pcap,
- "vt": cmd_vt, "jget": cmd_jget, "cats": cmd_cats}[sys.argv[1]](*sys.argv[2:])
+ "vt": cmd_vt, "jget": cmd_jget, "cats": cmd_cats, "embed": cmd_embed}[sys.argv[1]](*sys.argv[2:])
 PY
 tool() { python3 "$WORK/tool.py" "$@"; }
 
@@ -979,6 +1014,35 @@ fi
 # ================================================================ 4. on the device
 CRASHED=n; START_PROMPT=""; CONN_START=(); CONN_LATER=(); CAPTURED=n; PCAP_ERR=""
 SHOT=""
+# Screenshots, the automatic ones and those taken while the app is in use, in
+# order as "file<TAB>caption": they go into the report.
+SHOTS=()
+: > "$OUT/shots.tsv"
+add_shot() {  # add_shot <file in the review folder> <caption>
+  SHOTS+=("$1"$'\t'"$2")
+  printf '%s\t%s\n' "$1" "$2" >> "$OUT/shots.tsv"
+}
+# check_alive — a crash while the app is in use is said at once, not only at the end
+check_alive() {
+  [ "$CRASHED" = n ] || return 0
+  "${ADB[@]}" logcat -d -b crash 2>/dev/null | grep -q "Process: $APPID" || return 0
+  "${ADB[@]}" logcat -d -b crash > "$OUT/crash.log" 2>/dev/null || true
+  warn "it crashed while you used it (crash.log saved)"
+  CRASHED=later
+}
+take_shot() {  # take_shot — a screenshot now, with a caption typed by the tester
+  local n=1 f cap
+  while [ -e "$OUT/$(printf 'shot-%02d.png' "$n")" ]; do n=$((n + 1)); done
+  f="$(printf 'shot-%02d.png' "$n")"
+  if ! "${ADB[@]}" exec-out screencap -p > "$OUT/$f" 2>/dev/null || [ ! -s "$OUT/$f" ]; then
+    rm -f "$OUT/$f"; warn "the screenshot failed"; return 0
+  fi
+  printf '   %scaption (Enter for none):%s ' "$B" "$R" >&2
+  readline cap
+  add_shot "$f" "$cap"
+  ok "saved $f"
+  check_alive
+}
 if [ "$NO_DEVICE" = 0 ]; then
   step "4. On the device"
   # The app and PCAPdroid's prompts would open behind the lock screen.
@@ -1057,12 +1121,15 @@ if [ "$NO_DEVICE" = 0 ]; then
         | sed -E 's/^text="([^"]*)".*/\1/' | head -1)"
       ash rm -f /sdcard/fdroid-tester.xml || true
       START_PROMPT="${START_PROMPT:-a permission prompt}"
-      "${ADB[@]}" exec-out screencap -p > "$OUT/permission-on-start.png" 2>/dev/null || true
+      if "${ADB[@]}" exec-out screencap -p > "$OUT/permission-on-start.png" 2>/dev/null; then
+        add_shot permission-on-start.png "permission prompt on start"
+      fi
     fi
   done
   T_END="$(ash date +%s)"
   SHOT="$OUT/after-${WATCH}s.png"
-  "${ADB[@]}" exec-out screencap -p > "$SHOT" 2>/dev/null || SHOT=""
+  if "${ADB[@]}" exec-out screencap -p > "$SHOT" 2>/dev/null; then add_shot "${SHOT##*/}" "after $WATCH seconds"
+  else SHOT=""; fi
 
   if [ -z "$(ash pidof "$APPID")" ] || "${ADB[@]}" logcat -d -b crash 2>/dev/null | grep -q "Process: $APPID"; then
     CRASHED=y
@@ -1089,7 +1156,16 @@ if [ "$NO_DEVICE" = 0 ]; then
      - look at its settings: language, update checks, online features${R}
 
 EOF
-  pause "Press Enter when you are done…"
+  act "s + Enter: take a screenshot · Enter: done"
+  while :; do
+    printf '   %s➜%s ' "$BLU" "$R" >&2
+    readline line
+    case "$line" in
+      [sS]) take_shot ;;
+      "") break ;;
+      *) note "s + Enter takes a screenshot; Enter alone when you are done" ;;
+    esac
+  done
 
   if [ "$CRASHED" = n ] && "${ADB[@]}" logcat -d -b crash 2>/dev/null | grep -q "Process: $APPID"; then
     "${ADB[@]}" logcat -d -b crash > "$OUT/crash.log" 2>/dev/null || true
@@ -1270,6 +1346,14 @@ REPORT="$OUT/report.md"
     printf '%s' "$TESTER_NOTES" | sed 's/$/  /'
     printf '\n'
   fi
+  if [ "${#SHOTS[@]}" -gt 0 ]; then
+    printf '**Screenshots:**\n\n'
+    for s in "${SHOTS[@]}"; do
+      c="${s#*$'\t'}"
+      printf -- '- `%s`%s\n' "${s%%$'\t'*}" "${c:+ — $c}"
+    done
+    printf '\n'
+  fi
 
   printf '<details>\n<summary>Details</summary>\n\n'
   printf -- '- APK: `%s` (sha256 `%s`)\n' "${APK##*/}" "$SHA256"
@@ -1310,11 +1394,36 @@ LEFT="$(grep -c '(not checked)' "$REPORT" || true)"
 if [ -n "$EDIT_CMD" ] && confirm "Edit the report before posting?" "$([ "$LEFT" -gt 0 ] && echo y || echo n)"; then
   $EDIT_CMD "$REPORT" || warn "the editor exited with an error"
 fi
+# upload_shot <png> — uploads it for the comment and prints its path on
+# gitlab.com: the merge request's own fork first, then fdroiddata.
+upload_shot() {
+  local p v
+  for p in "$MR_SRC" "${MR_REPO//\//%2F}"; do
+    [ -n "$p" ] || continue
+    glab api --method POST "projects/$p/uploads" -F "file=@$1" > "$WORK/up.json" 2>/dev/null || continue
+    v="$(tool jget "$WORK/up.json" full_path)"
+    if [ -z "$v" ] && [ "$p" = "${MR_REPO//\//%2F}" ]; then v="$(tool jget "$WORK/up.json" url)"; fi
+    if [ -n "$v" ]; then printf '%s' "$v"; return 0; fi
+  done
+  return 1
+}
 if [ "$CAN_POST" = 0 ]; then
   note "glab is not ready (see the checks at the top) — paste ${REPORT#"$PWD"/} into $MR_URL yourself"
 elif confirm "Post the report as a comment on $MR_URL?" y; then
+  BODY="$REPORT"
+  if [ "${#SHOTS[@]}" -gt 0 ]; then
+    say "uploading the screenshots…"
+    : > "$WORK/uploads.tsv"
+    for s in "${SHOTS[@]}"; do
+      f="${s%%$'\t'*}"
+      if up="$(upload_shot "$OUT/$f")"; then printf '%s\t%s\n' "$f" "$up" >> "$WORK/uploads.tsv"
+      else warn "could not upload $f — the comment says so in its place"; fi
+    done
+    tool embed "$REPORT" "$WORK/uploads.tsv" "$OUT" > "$WORK/post.md"
+    BODY="$WORK/post.md"
+  fi
   if glab api --method POST "projects/${MR_REPO//\//%2F}/merge_requests/$IID/notes" \
-       -F "body=@$REPORT" > "$WORK/note.json" 2>&1; then
+       -F "body=@$BODY" > "$WORK/note.json" 2>&1; then
     NOTE_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("id", ""))' \
                "$WORK/note.json" 2>/dev/null || true)"
     ok "posted: $MR_URL${NOTE_ID:+#note_$NOTE_ID}"
