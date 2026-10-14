@@ -20,6 +20,10 @@ and this fork's script on 2026-10-14. Consult the live wiki for later changes.
 
 ## Setup
 
+On Windows, start with [Windows setup and commands](windows.md). The walkthrough
+and checklist below apply to both versions; use the PowerShell equivalents in
+that guide for the Bash command examples.
+
 ### Install the computer tools
 
 | Tool | Needed for |
@@ -433,6 +437,10 @@ bash fdroid-tester.sh "$MR_URL" -s "$SERIAL" --vpn
 Keys live under `${XDG_CONFIG_HOME:-$HOME/.config}/fdroid-tester/`, one key per
 file, on a single line. Create the directory and files with a text editor;
 do not put credentials in a report or commit them to the repository.
+
+On Windows, the PowerShell version defaults to `%APPDATA%\fdroid-tester` for
+keys and `%LOCALAPPDATA%\fdroid-tester` for the tracker cache. The XDG variables,
+when set, override those locations. See [Windows key setup](windows.md#optional-keys).
 
 | File | Effect |
 | --- | --- |

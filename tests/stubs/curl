@@ -23,6 +23,12 @@ case "$url" in
   *codequality_reports.json) serve "$FAKE/cq.json" ;;
   *.apk) serve "$FAKE/app.apk" ;;
   */repository/files/metadata%2F*) serve "$FAKE/meta.yml" ;;
+  */api/v3/files/*)
+    if [ -s "$FAKE/vt-file.json" ]; then serve "$FAKE/vt-file.json"; else code=404; fi ;;
+  */api/v3/files)
+    if [ -s "$FAKE/vt-upload.json" ]; then serve "$FAKE/vt-upload.json"; else code=404; fi ;;
+  */api/v3/analyses/*)
+    if [ -s "$FAKE/vt-analysis.json" ]; then serve "$FAKE/vt-analysis.json"; else code=404; fi ;;
   *) code=404; [ -n "$fmt" ] || exit 22 ;;
 esac
 [ -n "$fmt" ] && printf '%s' "$code"

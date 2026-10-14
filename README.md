@@ -12,6 +12,7 @@ supports a review; it does not approve an app for inclusion in F-Droid.
 
 ## Start here
 
+- **Windows:** use the native [PowerShell 7 version](docs/windows.md); no Bash or WSL is required.
 - **First run:** follow [setup](docs/reviewer-guide.md#setup), then the quick start below.
 - **Review an app:** follow the [complete walkthrough](docs/reviewer-guide.md#review-an-app).
 - **Understand the results:** read the [checklist mapping](docs/reviewer-guide.md#how-the-report-maps-to-f-droids-review).
@@ -19,6 +20,18 @@ supports a review; it does not approve an app for inclusion in F-Droid.
 - **Something failed:** see [troubleshooting](docs/reviewer-guide.md#troubleshooting).
 
 ## Quick start
+
+The commands below are for macOS and Linux. On Windows, follow
+[Windows setup](docs/windows.md#setup), then run in PowerShell 7:
+
+```powershell
+pwsh -NoProfile -File .\fdroid-tester.ps1 -Check
+$MR_URL = "https://gitlab.com/fdroid/fdroiddata/-/merge_requests/123"
+pwsh -NoProfile -File .\fdroid-tester.ps1 $MR_URL
+```
+
+Both versions use the same review checklist and prompts. Replace the example
+URL with your app's submission URL.
 
 Run in an interactive terminal on macOS or Linux with Bash 4.4+, Python 3.6+,
 `curl`, `unzip`, a SHA-256 tool, and Android SDK Build-Tools (`aapt2`). For a
@@ -92,7 +105,8 @@ activity. Use a suitable TV device and test navigation with its remote; see
 Based on [by-architect/fdroid-tester](https://github.com/by-architect/fdroid-tester).
 This fork adds screenshots during manual testing and image embedding when
 posting, Android TV support, PCAPdroid root capture with a `--vpn` override,
-local APK input, and fixes to the macOS check display and interactive flow.
+local APK input, a native Windows PowerShell 7 entry point, and fixes to the
+macOS check display and interactive flow.
 Licensed under [GPL-3.0-or-later](LICENSE).
 
 For contributors, the fixture suite runs the script with fake device, network,
@@ -101,6 +115,17 @@ Platform containing `android.jar`; set `ANDROID_HOME` to that SDK.
 
 ```bash
 bash tests/run.sh
+# Also run the review fixtures against PowerShell 7 on macOS/Linux.
+bash tests/run.sh --powershell
 ```
+
+Portable PowerShell CLI/process checks run on Windows as well:
+
+```powershell
+python tests/test_powershell.py
+```
+
+Keep the embedded Python analysis helper synchronized between the two entry
+points when changing APK, capture, or screenshot embedding logic.
 
 These tests do not replace a review on a real device.

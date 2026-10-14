@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # Runs the tests against the real script with a fake device and network:
-#   tests/run.sh [--script path/to/fdroid-tester.sh] [test name filter]
+#   tests/run.sh [--powershell] [--script path/to/script] [test name filter]
 set -u
 if [ "${BASH_VERSINFO[0]}" -lt 4 ] || { [ "${BASH_VERSINFO[0]}" = 4 ] && [ "${BASH_VERSINFO[1]}" -lt 4 ]; }; then
   echo "bash 4.4 or newer is needed (macOS: brew install bash)" >&2; exit 2
 fi
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SCRIPT="$HERE/../fdroid-tester.sh"; FILTER=""
+SCRIPT="$HERE/../fdroid-tester.sh"; FILTER=""; TEST_POWERSHELL=0; PWSH_BIN=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --powershell) TEST_POWERSHELL=1; SCRIPT="$HERE/../fdroid-tester.ps1"
+                  PWSH_BIN="$(command -v pwsh)" || exit 2 ;;
     --script) SCRIPT="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"; shift ;;
     *) FILTER="$1" ;;
   esac

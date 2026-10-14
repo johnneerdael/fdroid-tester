@@ -59,11 +59,15 @@ EOF
 
 run_tester() {  # run_tester "<answers>" <args…> — answers, then Enter for every default
   local answers="$1"; shift
+  local runner=("$BASH" "$SCRIPT")
+  if [ "$TEST_POWERSHELL" = 1 ]; then
+    runner=("$PWSH_BIN" -NoProfile -File "$SCRIPT")
+  fi
   RC=0
   ( cd "$T/work" && { printf '%b' "$answers"; yes '' | head -80; } \
       | PATH="$HERE/stubs:$BASH_DIR:/usr/bin:/bin:/usr/sbin:/sbin" HOME="$T/home" \
         XDG_CACHE_HOME="$T/home/cache" XDG_CONFIG_HOME="$T/home/config" \
-        EDITOR=true VISUAL=true "$BASH" "$SCRIPT" "$@" ) > "$T/out.txt" 2>&1 || RC=$?
+        EDITOR=true VISUAL=true "${runner[@]}" "$@" ) > "$T/out.txt" 2>&1 || RC=$?
 }
 
 review_dir() { printf '%s' "$T/work/${FAKE_APPID}_7-review"; }
